@@ -111,7 +111,7 @@
 
       <div class="field">
         <label>时间窗口（秒）</label>
-        <input type="number" id="windowSec" value="10" min="0" step="1" />
+        <input type="number" id="windowSec" value="10" min="1" step="1" />
       </div>
       <div class="field">
         <label>重量差阈值（kg）</label>
@@ -121,7 +121,6 @@
       <div class="field">
         <label>显示选项</label>
         <div style="display:flex; gap:14px;">
-          <label class="chk"><input type="checkbox" id="filterNoise" /> 过滤噪声（只看有效变化）</label>
           <label class="chk"><input type="checkbox" id="highlightStable" checked /> 高亮平稳段</label>
           <label class="chk"><input type="checkbox" id="followZoom" checked /> 跟随放大区域</label>
         </div>

@@ -11,7 +11,6 @@
     weightCol: 1,
     windowSec: 10,
     deltaKg: 0.01,
-    filterNoise: false,
     highlightStable: true,
     followZoom: true,
     parsed: [],          // [{t:Date, w:Number}]
@@ -245,7 +244,7 @@
         if (segStart !== null) { ranges.push([segStart, ti]); segStart = null; }
       } else {
         stable[i] = true;
-        disp[i] = [ti, state.filterNoise ? data[j].w : wi];
+        disp[i] = [ti, wi];
         closeRun();
         if (segStart === null) segStart = ti;
       }
@@ -317,13 +316,13 @@
       data: data,
       lineStyle: { width: 1.4, color: '#2f6fed' },
       itemStyle: { color: '#2f6fed' },
-      areaStyle: state.filterNoise ? null : { color: 'rgba(47,111,237,0.05)' }
+      areaStyle: { color: 'rgba(47,111,237,0.05)' }
     };
 
     if (state.highlightStable && state.stableRanges.length) {
       series.markArea = {
         silent: true,
-        itemStyle: { color: 'rgba(154,163,178,0.12)' },
+        itemStyle: { color: 'rgba(154,163,178,0.06)' },
         data: state.stableRanges.map(function (r) { return [{ xAxis: r[0] }, { xAxis: r[1] }]; })
       };
     }
@@ -419,13 +418,17 @@
       return '<div class="stat"><div class="k">' + k + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>';
     }
     var suffix = range ? '（视图内）' : '';
-    box.innerHTML =
+    var html =
       stat('有效点数' + suffix, s.points) +
       stat('上料/出料事件' + suffix, s.loads + ' / ' + s.unloads) +
       stat('净重量变化' + suffix, (s.net >= 0 ? '+' : '') + s.net.toFixed(3) + ' kg', s.net >= 0 ? 'load' : 'unload') +
       stat('单次最大波动' + suffix, s.maxMag.toFixed(3) + ' kg') +
       stat('最大重量' + suffix, s.max.toFixed(3) + ' kg') +
       stat('最小重量' + suffix, s.min.toFixed(3) + ' kg');
+    if (s.points && s.count === 0) {
+      html += '<div style="padding:10px 12px; margin-top:8px; background:#fff8e6; border:1px solid #ffe58f; border-radius:8px; color:#8a6d1b; font-size:12px;">当前阈值下未识别到上料/出料事件，所有点被判为平稳段（抖动&lt;阈值）。如需看到事件，请尝试<b>降低重量差阈值</b>或<b>缩小时间窗口</b>。</div>';
+    }
+    box.innerHTML = html;
   }
 
   // 取图表当前 dataZoom 显示范围（毫秒），无缩放返回 null
@@ -548,12 +551,14 @@
     $('timeCol').addEventListener('change', function (e) { state.timeCol = +e.target.value; updateAll(); });
     $('weightCol').addEventListener('change', function (e) { state.weightCol = +e.target.value; updateAll(); });
     $('windowSec').addEventListener('input', function (e) {
-      var v = parseFloat(e.target.value); state.windowSec = isNaN(v) || v < 0 ? 0 : v; updateAll(true);
+      var v = parseFloat(e.target.value);
+      if (isNaN(v) || v <= 0) { v = 1; e.target.value = v; }
+      state.windowSec = v;
+      updateAll(true);
     });
     $('deltaKg').addEventListener('input', function (e) {
       var v = parseFloat(e.target.value); state.deltaKg = isNaN(v) || v < 0 ? 0 : v; updateAll(true);
     });
-    $('filterNoise').addEventListener('change', function (e) { state.filterNoise = e.target.checked; updateAll(true); });
     $('highlightStable').addEventListener('change', function (e) { state.highlightStable = e.target.checked; updateAll(true); });
     $('followZoom').addEventListener('change', function (e) {
       state.followZoom = e.target.checked;
