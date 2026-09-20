@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-09-20d';
+  var APP_VERSION = '2026-09-20e';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   var dragLogs = [];
@@ -1062,8 +1062,17 @@
     initChart();
     bind();
     var v = document.getElementById('appVer');
-    if (v) v.textContent = 'v' + APP_VERSION;
-    try { console.log('[WeightChart] app.js v' + APP_VERSION + ' 已加载，拖拽监听已就绪'); } catch (e) { }
+    if (v) {
+      v.textContent = 'v' + APP_VERSION;
+      // 版本徽标点一下可显示/隐藏拖拽日志（默认隐藏，排查问题时再叫出来）
+      v.title = '点击显示 / 隐藏拖拽日志';
+      v.style.cursor = 'pointer';
+      v.addEventListener('click', function () {
+        var el = document.getElementById('dragLog');
+        if (el) el.style.display = (el.style.display === 'none' ? '' : 'none');
+      });
+    }
+    try { console.log('[WeightChart] app.js v' + APP_VERSION + ' 已加载，拖拽监听已就绪（点标题旁版本徽标可显示拖拽日志）'); } catch (e) { }
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
