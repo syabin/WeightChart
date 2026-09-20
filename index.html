@@ -11,66 +11,97 @@
     --load:#e0533d; --unload:#2f9e6f; --stable:#9aa3b2;
   }
   *{box-sizing:border-box;}
+  html,body{height:100%;}
   body{
-    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
-    background:var(--bg); color:var(--ink); font-size:14px; line-height:1.5;
+    margin:0; display:flex; flex-direction:column; overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--ink); font-size:13px; line-height:1.45;
   }
   header{
-    padding:14px 22px; background:var(--card); border-bottom:1px solid var(--line);
-    display:flex; align-items:center; gap:12px;
+    flex:0 0 auto; padding:9px 18px; background:var(--card); border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:10px;
   }
-  header h1{font-size:17px; margin:0; font-weight:650;}
-  header .tag{font-size:12px; color:var(--muted); background:var(--accent-soft); padding:2px 9px; border-radius:20px;}
-  .wrap{padding:16px 22px 28px; max-width:1500px; margin:0 auto;}
-  .card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:14px;}
-  .controls{display:flex; flex-wrap:wrap; gap:14px 18px; align-items:flex-end;}
-  .field{display:flex; flex-direction:column; gap:5px;}
-  .field label{font-size:12px; color:var(--muted); font-weight:600;}
+  header h1{font-size:15px; margin:0; font-weight:650;}
+  header .tag{font-size:11px; color:var(--muted); background:var(--accent-soft); padding:2px 8px; border-radius:20px;}
+  .wrap{flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:10px; padding:10px 14px 12px; max-width:1700px; width:100%; margin:0 auto;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px;}
+  /* 控件区：无标题、紧凑、竖线分隔 */
+  .controls{display:flex; flex-wrap:wrap; gap:8px 12px; align-items:flex-start;}
+  .blk{display:flex; gap:9px; align-items:flex-start;}
+  .vsep{width:1px; align-self:stretch; background:var(--line);}
+  .field{display:flex; flex-direction:column; gap:3px; min-width:0;}
+  .field>label{font-size:11px; color:var(--muted); font-weight:600; white-space:nowrap;}
   select, input[type="number"], input[type="text"]{
-    border:1px solid var(--line); border-radius:8px; padding:7px 9px; font-size:13px;
-    background:#fff; color:var(--ink); min-width:96px; outline:none;
+    height:28px; border:1px solid var(--line); border-radius:7px; padding:0 8px; font-size:12.5px;
+    background:#fff; color:var(--ink); min-width:82px; outline:none;
   }
   select:focus, input:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
   .btn{
-    border:1px solid var(--accent); background:var(--accent); color:#fff !important; border-radius:8px;
-    padding:8px 14px; font-size:13px; cursor:pointer; font-weight:600; white-space:nowrap;
+    height:28px; display:inline-flex; align-items:center; justify-content:center;
+    border:1px solid var(--accent); background:var(--accent); color:#fff !important; border-radius:7px;
+    padding:0 12px; font-size:12.5px; cursor:pointer; font-weight:600; white-space:nowrap;
   }
   .btn:hover{filter:brightness(1.05);}
   .btn.ghost{background:#fff; color:var(--accent) !important;}
   .btn.ghost:hover{background:var(--accent-soft);}
-  .chk{display:flex; align-items:center; gap:6px; font-size:13px; color:var(--ink); cursor:pointer; user-select:none;}
-  .chk input{width:16px; height:16px; accent-color:var(--accent);}
-  .filebtn{display:inline-flex; align-items:center; gap:7px; color:#fff;}
+  .chkrow{height:28px; display:flex; align-items:center; gap:12px;}
+  .chk{display:inline-flex; align-items:center; gap:5px; font-size:12.5px; color:var(--ink); cursor:pointer; user-select:none; white-space:nowrap;}
+  .chk input{width:15px; height:15px; accent-color:var(--accent);}
+  .filebtn{color:#fff;}
   .filebtn input{display:none;}
-  .sep{width:1px; align-self:stretch; background:var(--line); margin:0 2px;}
-  .hint{font-size:12px; color:var(--muted); margin-top:8px;}
-  .main{display:flex; gap:14px; align-items:stretch;}
-  .chartcard{flex:1 1 auto; min-width:0; display:flex; flex-direction:column;}
-  #chart{width:100%; height:560px;}
-  .aside{flex:0 0 380px; display:flex; flex-direction:column; gap:14px; max-height:760px; overflow:auto;}
-  .stats{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
-  .stat{background:var(--bg); border-radius:9px; padding:10px 12px;}
-  .stat .k{font-size:12px; color:var(--muted);}
-  .stat .v{font-size:18px; font-weight:700; margin-top:2px;}
+  .hint{font-size:11px; color:var(--muted);}
+  .drop-hint{font-size:11px; color:var(--muted);}
+  .drop-hint.hidden{display:none;}
+  .filename{height:28px; display:flex; align-items:center; font-size:12.5px; font-weight:600; color:var(--accent); max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .axis-row{display:flex; gap:5px; align-items:center;}
+  .axis-input{width:74px; min-width:74px; font-size:12px; padding:0 7px;}
+  .axis-reset{height:28px; padding:0 10px; font-size:12px;}
+  .axis-input.axis-bad{border-color:var(--load); box-shadow:0 0 0 2px #fdeae6; color:var(--load); font-weight:600;}
+  /* 拖拽浮层 */
+  #dropzone{position:fixed; inset:0; z-index:9999; display:none; align-items:center; justify-content:center; background:rgba(47,111,237,.10); backdrop-filter:blur(2px); border:3px dashed var(--accent); border-radius:16px; pointer-events:none;}
+  #dropzone.show{display:flex;}
+  #dropzone .drop-inner{background:var(--card); border-radius:14px; padding:26px 40px; box-shadow:0 10px 30px rgba(31,39,51,.12); text-align:center;}
+  #dropzone .drop-inner .t{font-size:17px; font-weight:700; color:var(--accent);}
+  #dropzone .drop-inner .d{font-size:12px; color:var(--muted); margin-top:5px;}
+  /* 主区：图表撑满剩余高度 */
+  .main{flex:1 1 auto; min-height:0; display:flex; gap:10px;}
+  .chartcard{flex:1 1 auto; min-width:0; display:flex; flex-direction:column; padding:8px 10px;}
+  #chart{flex:1 1 auto; min-height:240px; width:100%;}
+  .legend{display:flex; gap:14px; flex-wrap:wrap; font-size:11.5px; color:var(--muted); margin-top:4px;}
+  .legend span{display:inline-flex; align-items:center; gap:5px;}
+  .dot{width:10px; height:10px; border-radius:3px; display:inline-block;}
+  .aside{flex:0 0 330px; min-height:0; display:flex; flex-direction:column; gap:10px; overflow-y:auto; overflow-x:hidden; padding-right:2px;}
+  /* 统计卡固定按内容高度显示，绝不压缩（否则内容被裁掉只剩标题） */
+  .aside .card{display:flex; flex-direction:column; flex:0 0 auto;}
+  .aside .card.grow{flex:1 1 auto; min-height:170px;}
+  .card-title{font-weight:650; font-size:12.5px; margin-bottom:8px; flex:0 0 auto;}
+  .stats{display:grid; grid-template-columns:1fr 1fr; gap:7px;}
+  .stat{background:var(--bg); border-radius:8px; padding:6px 8px; min-width:0;}
+  .stat .k{font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .stat .v{font-size:14.5px; font-weight:700; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .stat .v.load{color:var(--load);} .stat .v.unload{color:var(--unload);}
-  .preview{max-height:330px; overflow:auto; border:1px solid var(--line); border-radius:8px;}
-  table{border-collapse:collapse; width:100%; font-size:12.5px;}
-  th,td{padding:5px 9px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap;}
+  .preview{flex:1 1 auto; min-height:0; overflow:auto; border:1px solid var(--line); border-radius:7px;}
+  table{border-collapse:collapse; width:100%; font-size:12px;}
+  th,td{padding:4px 8px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap;}
   th{position:sticky; top:0; background:#f0f3f9; color:var(--muted); font-weight:600; z-index:1;}
   td.l,th.l{text-align:left;}
-  .pill{font-size:11px; padding:1px 7px; border-radius:20px; font-weight:600;}
+  .pill{font-size:10.5px; padding:1px 6px; border-radius:20px; font-weight:600;}
   .pill.load{background:#fdeae6; color:var(--load);}
   .pill.unload{background:#e6f5ee; color:var(--unload);}
   .pill.stable{background:#eef1f6; color:var(--stable);}
   .pill.start{background:var(--accent-soft); color:var(--accent);}
-  .legend{display:flex; gap:16px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-top:6px;}
-  .legend span{display:inline-flex; align-items:center; gap:6px;}
-  .dot{width:10px; height:10px; border-radius:3px; display:inline-block;}
-  .empty{color:var(--muted); text-align:center; padding:60px 10px; font-size:14px;}
-  @media (max-width:1080px){ .main{flex-direction:column;} .aside{flex:none; max-height:none; width:100%;} #chart{height:460px;} }
+  .empty{color:var(--muted); text-align:center; padding:40px 10px; font-size:13px;}
+  @media (max-width:1080px){
+    body{overflow:auto;}
+    .main{flex-direction:column;}
+    .aside{flex:none;}
+    #chart{flex:none; height:420px;}
+    .preview{max-height:300px; flex:none;}
+  }
 </style>
 </head>
 <body>
+<div id="dropzone"><div class="drop-inner"><div class="t">松开即可导入文件</div><div class="d">支持 .xlsx / .xls / .csv</div></div></div>
 <header>
   <h1>重量波动折线图分析</h1>
   <span class="tag">离线版 · 数据不出本机</span>
@@ -79,86 +110,107 @@
 <div class="wrap">
   <div class="card">
     <div class="controls">
-      <div class="field">
-        <label>导入数据</label>
-        <label class="btn filebtn">选择 Excel 文件
-          <input type="file" id="file" accept=".xlsx,.xls,.csv" />
-        </label>
-      </div>
 
-      <div class="field" id="sheetField" style="display:none;">
-        <label>工作表</label>
-        <select id="sheet"></select>
-      </div>
-
-      <div class="field">
-        <label>首行是表头</label>
-        <label class="chk"><input type="checkbox" id="hasHeader" /> 是</label>
-      </div>
-
-      <div class="sep"></div>
-
-      <div class="field">
-        <label>时间列</label>
-        <select id="timeCol"></select>
-      </div>
-      <div class="field">
-        <label>重量列</label>
-        <select id="weightCol"></select>
-      </div>
-
-      <div class="sep"></div>
-
-      <div class="field">
-        <label>时间窗口（秒）</label>
-        <input type="number" id="windowSec" value="10" min="1" step="1" />
-      </div>
-      <div class="field">
-        <label>重量差阈值（kg）</label>
-        <input type="number" id="deltaKg" value="0.01" min="0" step="0.001" />
-      </div>
-
-      <div class="field">
-        <label>显示选项</label>
-        <div style="display:flex; gap:14px;">
-          <label class="chk"><input type="checkbox" id="highlightStable" checked /> 高亮平稳段</label>
-          <label class="chk"><input type="checkbox" id="followZoom" checked /> 跟随放大区域</label>
+      <div class="blk">
+        <div class="field">
+          <label>数据文件</label>
+          <label class="btn filebtn">选择 Excel 文件
+            <input type="file" id="file" accept=".xlsx,.xls,.csv" />
+          </label>
+          <div class="drop-hint hidden" id="dropHint">拖到页面任意位置也可导入</div>
+        </div>
+        <div class="field" id="sheetField" style="display:none;">
+          <label>工作表</label>
+          <select id="sheet"></select>
+        </div>
+        <div class="field">
+          <label>表头</label>
+          <div class="chkrow"><label class="chk"><input type="checkbox" id="hasHeader" /> 首行是表头</label></div>
+        </div>
+        <div class="field" id="fileName" style="display:none;">
+          <label>当前文件</label>
+          <div class="filename" id="fileNameVal">—</div>
         </div>
       </div>
 
-      <div class="sep"></div>
+      <div class="vsep"></div>
 
-      <div class="field">
-        <label>操作</label>
-        <div style="display:flex; gap:8px;">
-          <button class="btn ghost" id="resetZoom">还原缩放</button>
-          <button class="btn ghost" id="exportPng">导出图片</button>
-          <button class="btn ghost" id="exportCsv">导出CSV</button>
+      <div class="blk">
+        <div class="field"><label>时间列</label><select id="timeCol"></select></div>
+        <div class="field"><label>重量列</label><select id="weightCol"></select></div>
+        <div class="field"><label>辅助列</label><select id="auxCol"></select></div>
+      </div>
+
+      <div class="vsep"></div>
+
+      <div class="blk">
+        <div class="field" id="weightAxisField">
+          <label>重量轴（左）最小 / 最大</label>
+          <div class="axis-row">
+            <input type="number" id="wMin" class="axis-input" placeholder="最小" />
+            <input type="number" id="wMax" class="axis-input" placeholder="最大" />
+            <button type="button" class="btn ghost axis-reset" id="wAxisReset" title="恢复默认（无余量）">默认</button>
+          </div>
+        </div>
+        <div class="field" id="auxAxisField" style="display:none;">
+          <label>辅助轴（右）最小 / 最大</label>
+          <div class="axis-row">
+            <input type="number" id="aMin" class="axis-input" placeholder="最小" />
+            <input type="number" id="aMax" class="axis-input" placeholder="最大" />
+            <button type="button" class="btn ghost axis-reset" id="aAxisReset" title="恢复默认（无余量）">默认</button>
+          </div>
         </div>
       </div>
+
+      <div class="vsep"></div>
+
+      <div class="blk">
+        <div class="field" id="baselineField">
+          <label>基准线 · 设定重量</label>
+          <div class="axis-row">
+            <input type="number" id="setWeight" class="axis-input" placeholder="设定重量" />
+            <button type="button" class="btn ghost axis-reset" id="pickBaseline" title="点击后在折线图上点选基准时间">点选基准</button>
+            <button type="button" class="btn ghost axis-reset" id="clearBaseline" title="关闭并清除基准">清除</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="vsep"></div>
+
+      <div class="blk">
+        <div class="field"><label>时间窗口（秒）</label><input type="number" id="windowSec" value="10" min="1" step="1" style="min-width:76px;" /></div>
+        <div class="field"><label>重量差阈值（kg）</label><input type="number" id="deltaKg" value="0.01" min="0" step="0.001" style="min-width:82px;" /></div>
+        <div class="field">
+          <label>显示</label>
+          <div class="chkrow">
+            <label class="chk"><input type="checkbox" id="highlightStable" checked /> 平稳段</label>
+            <label class="chk"><input type="checkbox" id="followZoom" checked /> 跟随放大</label>
+          </div>
+        </div>
+      </div>
+
     </div>
-    <div class="hint">导入后默认第 1 列为时间、第 2 列为重量；若列不对，用上方下拉手动修正。鼠标在图上悬停查看时间与重量；滚轮缩放、拖底部滑块或点工具栏「框选放大」局部查看。</div>
+    <div class="hint" id="baselineHint" style="margin-top:7px;">点「点选基准」或图表顶部图标，然后在图上点一下选定基准时间；「设定重量」用于算偏差比例。</div>
   </div>
 
   <div class="main">
     <div class="card chartcard">
       <div id="chart"></div>
       <div class="legend">
-        <span><i class="dot" style="background:#2f6fed"></i>重量折线</span>
-        <span><i class="dot" style="background:rgba(154,163,178,0.5)"></i>平稳段（抖动<阈值，不计为上/出料）</span>
-        <span><i class="dot" style="background:var(--load)"></i>上料 ▲</span>
-        <span><i class="dot" style="background:var(--unload)"></i>出料 ▼</span>
+        <span><i class="dot" style="background:#2f6fed"></i>重量（视图）：<b id="legendW" style="color:#1f2733;">—</b></span>
+        <span id="legendAux" style="display:none;"><i class="dot" style="background:#ff7a1a"></i>辅助（视图）：<b id="legendA" style="color:#1f2733;">—</b></span>
+        <span><i class="dot" style="background:rgba(154,163,178,0.5)"></i>平稳段（抖动&lt;阈值）</span>
       </div>
     </div>
 
     <div class="aside">
       <div class="card">
-        <div style="font-weight:650; margin-bottom:10px;">统计面板</div>
-        <div class="stats" id="stats"><div class="empty" style="padding:18px;">导入数据后显示</div></div>
+        <div class="card-title">统计面板</div>
+        <div class="stats" id="stats"><div class="empty" style="padding:14px;">导入数据后显示</div></div>
       </div>
-      <div class="card" style="flex:1; min-height:0; display:flex; flex-direction:column;">
-        <div style="font-weight:650; margin-bottom:10px;">数据预览（前 300 行）</div>
-        <div class="preview" id="preview"><div class="empty" style="padding:24px;">导入数据后显示</div></div>
+      <div class="card grow">
+        <div class="card-title">数据预览（前 1000 行）</div>
+        <div class="preview" id="preview"><div class="empty" style="padding:20px;">导入数据后显示</div></div>
       </div>
     </div>
   </div>

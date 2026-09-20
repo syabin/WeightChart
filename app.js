@@ -9,12 +9,21 @@
     hasHeader: false,
     timeCol: 0,
     weightCol: 1,
+    auxCol: -1,         // -1 = 未启用
     windowSec: 10,
     deltaKg: 0.01,
     highlightStable: true,
     followZoom: true,
-    parsed: [],          // [{t:Date, w:Number}]
+    // 手动坐标轴：null = 跟随默认（无余量），数字 = 手动值（全程保留，不随缩放重置）
+    manualWMin: null, manualWMax: null,
+    manualAMin: null, manualAMax: null,
+    showBaseLine: false,    // 基准线默认不显示，点工具栏「基准线」按钮才显示
+    baselineTime: null,     // Date | null，在图上点选得到；基准重量自动取该时间点重量
+    setWeight: null,        // Number | null，设定重量（用于计算偏差比例）
+    pickMode: false,        // true = 正在等待用户在图上点选基准时间
+    parsed: [],          // [{t:Date, w:Number, a:Number|null}]
     displayData: [],     // [[Number(ms), Number]] 用于 ECharts 绘制
+    auxData: [],         // [[Number(ms), Number], ...] 辅助列绘制
     isEvent: [],         // Boolean[]
     eventType: [],       // 'load'|'unload'|null
     stableFlags: [],     // Boolean[] true=平稳(噪声)
@@ -25,6 +34,62 @@
   };
 
   var chart = null;
+
+  // 把数值统一按整 10 圆整（最小值向下取 10 的倍数、最大值向上取 10 的倍数），用于坐标轴默认上下界
+  function roundUpToNice(v) {
+    if (v <= 0) return 0;
+    return Math.ceil(v / 10) * 10;
+  }
+  function roundDownToNice(v) {
+    if (v <= 0) return 0;
+    return Math.floor(v / 10) * 10;
+  }
+
+  // 解析基准重量：按基准时间在 parsed 里取最近数据点的重量（基准重量 = 基准时间的重量）
+  function resolveBaseline() {
+    if (!state.showBaseLine || state.baselineTime == null || !state.parsed.length) return null;
+    var target = state.baselineTime.getTime();
+    var best = null, bestD = Infinity;
+    for (var i = 0; i < state.parsed.length; i++) {
+      var d = Math.abs(state.parsed[i].t.getTime() - target);
+      if (d < bestD) { bestD = d; best = state.parsed[i].w; }
+    }
+    return best;
+  }
+
+  // 退出点选模式（恢复默认光标）
+  function disablePick() {
+    state.pickMode = false;
+    if (chart) { try { chart.getZr().setCursorStyle('default'); } catch (e) { } }
+  }
+
+  // 进入点选模式：光标变十字，等待用户在图上点击
+  function enablePick() {
+    if (!chart || !state.parsed.length) return;
+    state.pickMode = true;
+    try { chart.getZr().setCursorStyle('crosshair'); } catch (e) { }
+    updateBaseLineUI();
+  }
+
+  // 在图上按像素位置点选基准：换算成时间 → 取最近数据点 → 基准时间 = 该点时间
+  function pickBaselineAt(px, py) {
+    if (!chart || !state.parsed.length) return;
+    if (!chart.containPixel({ gridIndex: 0 }, [px, py])) return;   // 只在网格区内响应，避开工具栏/坐标轴
+    var v = chart.convertFromPixel({ gridIndex: 0 }, [px, py]);
+    if (!v || !isFinite(+v[0])) return;
+    var tms = +v[0];
+    var best = null, bestD = Infinity;
+    for (var i = 0; i < state.parsed.length; i++) {
+      var d = Math.abs(state.parsed[i].t.getTime() - tms);
+      if (d < bestD) { bestD = d; best = state.parsed[i]; }
+    }
+    if (!best) return;
+    state.baselineTime = best.t;
+    state.showBaseLine = true;
+    disablePick();
+    renderChart(true);
+    updateBaseLineUI();
+  }
 
   // ---------- 工具函数 ----------
   function $(id) { return document.getElementById(id); }
@@ -88,17 +153,23 @@
     return colLetter(c);
   }
 
-  function downloadFile(content, filename, mime) {
-    var blob = new Blob([content], { type: mime + ';charset=utf-8' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click();
-    setTimeout(function () { URL.revokeObjectURL(url); document.body.removeChild(a); }, 1000);
+  // ---------- 数据解析 ----------
+  function showFileName(name) {
+    var box = $('fileName');
+    var hint = $('dropHint');
+    if (!box) return;
+    if (name) {
+      $('fileNameVal').textContent = name;
+      box.style.display = '';
+      if (hint) hint.classList.add('hidden');
+    } else {
+      box.style.display = 'none';
+      if (hint) hint.classList.remove('hidden');
+    }
   }
 
-  // ---------- 数据解析 ----------
   function handleFile(file) {
+    showFileName(file && file.name ? file.name : null);
     var reader = new FileReader();
     reader.onload = function (e) {
       try {
@@ -148,25 +219,35 @@
     buildColumnSelectors();
     state.timeCol = 0;
     state.weightCol = Math.min(1, cc - 1);
+    state.auxCol = -1;
+    state.showBaseLine = false;
+    state.baselineTime = null;
+    disablePick();
     $('timeCol').value = String(state.timeCol);
     $('weightCol').value = String(state.weightCol);
+    $('auxCol').value = String(state.auxCol);
 
     updateAll();
   }
 
   function buildColumnSelectors() {
-    var tc = $('timeCol'), wc = $('weightCol');
-    tc.innerHTML = ''; wc.innerHTML = '';
+    var tc = $('timeCol'), wc = $('weightCol'), ac = $('auxCol');
+    tc.innerHTML = ''; wc.innerHTML = ''; ac.innerHTML = '';
+    // 辅助列第一项为「无」
+    var noOpt = document.createElement('option');
+    noOpt.value = '-1'; noOpt.textContent = '无';
+    ac.appendChild(noOpt);
     for (var c = 0; c < state.colCount; c++) {
       var o1 = document.createElement('option'); o1.value = String(c); o1.textContent = colLabel(c);
       var o2 = document.createElement('option'); o2.value = String(c); o2.textContent = colLabel(c);
-      tc.appendChild(o1); wc.appendChild(o2);
+      var o3 = document.createElement('option'); o3.value = String(c); o3.textContent = colLabel(c);
+      tc.appendChild(o1); wc.appendChild(o2); ac.appendChild(o3);
     }
   }
 
   function parseData() {
     var rows = state.rows;
-    var tCol = state.timeCol, wCol = state.weightCol;
+    var tCol = state.timeCol, wCol = state.weightCol, aCol = state.auxCol;
     var start = state.hasHeader ? 1 : 0;
     var out = [];
     for (var i = start; i < rows.length; i++) {
@@ -175,7 +256,8 @@
       var t = parseTime(r[tCol]);
       var w = parseWeight(r[wCol]);
       if (t == null || isNaN(w)) continue;
-      out.push({ t: t, w: w });
+      var a = (aCol >= 0) ? parseWeight(r[aCol]) : null;
+      out.push({ t: t, w: w, a: (aCol >= 0 && !isNaN(a)) ? a : null });
     }
     out.sort(function (a, b) { return a.t.getTime() - b.t.getTime(); });
     state.parsed = out;
@@ -293,6 +375,11 @@
   function initChart() {
     chart = echarts.init($('chart'));
     window.addEventListener('resize', function () { if (chart) chart.resize(); });
+    // 满屏自适应布局：容器尺寸随页面变化时同步重算图表
+    if (window.ResizeObserver) {
+      try { new ResizeObserver(function () { if (chart) chart.resize(); }).observe($('chart')); } catch (e) { }
+    }
+    setTimeout(function () { if (chart) chart.resize(); }, 0);
   }
 
   function renderChart(keepZoom) {
@@ -305,9 +392,49 @@
       }
     }
     var data = state.displayData;
+    var auxActive = state.auxCol >= 0;
+    var auxData = [];
+    if (auxActive) {
+      // 基于 parsed 构建辅助列数据（时间 + 辅助值，跳过 NaN）
+      for (var pi = 0; pi < state.parsed.length; pi++) {
+        var p = state.parsed[pi];
+        if (p.a != null && !isNaN(p.a)) auxData.push([p.t.getTime(), p.a]);
+      }
+    }
+    state.auxData = auxData;
+
+    // 默认上下界（无余量，仅按数据本身）：直接取 displayData 的真实 min/max
+    function rawMinMax(arr) {
+      var min = Infinity, max = -Infinity;
+      for (var i = 0; i < arr.length; i++) {
+        var v = arr[i][1];
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+      if (!isFinite(min) || !isFinite(max)) return null;
+      return { min: min, max: max };
+    }
+    var wData = state.displayData;
+    var wRaw = rawMinMax(wData);
+    // 默认值：min = 数据最小值向下圆整；max = 数据最大值 + 其 5% 预留后向上圆整到 1/5/10/50/100 台阶
+    var wMin, wMax;
+    if (wRaw) {
+      wMin = state.manualWMin != null ? state.manualWMin : roundDownToNice(wRaw.min);
+      var wDefMax = roundUpToNice(wRaw.max + Math.abs(wRaw.max) * 0.05);
+      wMax = state.manualWMax != null ? state.manualWMax : wDefMax;
+    } else { wMin = 0; wMax = 0; }
+    // 辅助轴
+    var aMin, aMax;
+    if (auxActive) {
+      var aRaw = rawMinMax(auxData);
+      aMin = aRaw ? (state.manualAMin != null ? state.manualAMin : roundDownToNice(aRaw.min)) : 0;
+      aMax = aRaw ? (state.manualAMax != null ? state.manualAMax : roundUpToNice(aRaw.max)) : 0;
+    }
+
     var series = {
       name: '重量',
       type: 'line',
+      yAxisIndex: 0,
       showSymbol: false,
       smooth: false,
       large: true,
@@ -319,11 +446,51 @@
       areaStyle: { color: 'rgba(47,111,237,0.05)' }
     };
 
+    var seriesArr = [series];
+    var auxSeries = null;
+    if (auxActive) {
+      auxSeries = {
+        name: '辅助',
+        type: 'line',
+        yAxisIndex: 1,
+        showSymbol: false,
+        smooth: false,
+        animation: false,
+        z: 2,                 // 放在重量线（z:3）下层，避免遮挡
+        data: auxData,
+        lineStyle: { width: 1.4, color: 'rgba(255,122,26,0.5)' },
+        itemStyle: { color: 'rgba(255,122,26,0.5)' }
+      };
+      seriesArr.push(auxSeries);
+      series.z = 3;          // 重量线在上层
+    }
+
     if (state.highlightStable && state.stableRanges.length) {
       series.markArea = {
         silent: true,
         itemStyle: { color: 'rgba(154,163,178,0.06)' },
         data: state.stableRanges.map(function (r) { return [{ xAxis: r[0] }, { xAxis: r[1] }]; })
+      };
+    }
+
+    // 注：已按需求移除图上的「上料 ▲ / 出料 ▼」markPoint 标记（用户反馈不准确）。
+    // 上料/出料判定仍在统计面板与数据预览表中保留。
+
+    // 基准线：y = 解析出的基准重量，仅在 state.showBaseLine 为 true 时绘制（红色横线 50% 透明）
+    var baseW = resolveBaseline();
+    if (baseW != null) {
+      series.markLine = {
+        silent: true,
+        symbol: ['none', 'none'],
+        lineStyle: { color: 'rgba(255,59,48,0.5)', type: 'dashed', width: 1.6 },
+        label: {
+          show: true,
+          position: 'insideEndTop',
+          color: '#ff3b30',
+          fontSize: 11,
+          formatter: function () { return '基准 ' + baseW.toFixed(3) + ' kg'; }
+        },
+        data: [{ yAxis: baseW, name: '基准' }]
       };
     }
 
@@ -344,7 +511,7 @@
 
     var opt = {
       backgroundColor: '#fff',
-      grid: { left: 60, right: 24, top: 34, bottom: 70 },
+      grid: { left: 60, right: auxActive ? 64 : 24, top: 34, bottom: 70 },
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'line', lineStyle: { color: '#9aa3b2' } },
@@ -352,25 +519,71 @@
         borderColor: '#e4e8f0',
         textStyle: { color: '#1f2733' },
         formatter: function (params) {
+          if (!params || !params.length) return '';
           var p = params[0];
-          if (!p) return '';
-          var t = new Date(p.value[0]);
-          var w = p.value[1];
-          var extra = '';
-          var idx = p.dataIndex;
-          if (idx != null && state.isEvent[idx]) {
-            var evType = state.eventType[idx];
-            extra = '<br/>' + (evType === 'load' ? '上料 ▲' : '出料 ▼');
+          var time = formatTime(new Date(p.value[0]));
+          // 固定三行：时间 / 重量 / 辅助，无对应数据则该值显示 —
+          var wVal = null, aVal = null;
+          for (var i = 0; i < params.length; i++) {
+            var pp = params[i];
+            var v = pp.value && pp.value[1];
+            if (v == null || isNaN(v)) continue;
+            if (pp.seriesName === '辅助') aVal = (+v).toFixed(3);
+            else wVal = (+v).toFixed(3);
           }
-          return formatTime(t) + '<br/>重量：<b>' + w.toFixed(3) + ' kg</b>' + extra;
+          var html = '<div style="min-width:120px;">' +
+            '<div style="color:#6b7686;">' + time + '</div>' +
+            '<div style="margin-top:4px;"><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#2f6fed;margin-right:6px;"></i>重量' + (wVal != null ? '：<b>' + wVal + ' kg</b>' : '') + '</div>';
+          if (auxActive) {
+            html += '<div style="margin-top:3px;"><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:rgba(255,122,26,0.5);margin-right:6px;"></i>辅助' + (aVal != null ? '：<b>' + aVal + '</b>' : '') + '</div>';
+          }
+          // 基准线：差值 = 悬浮处重量 − 基准线重量（正红负绿）
+          // 偏差比例 = (|差值| − 设定重量) / 设定重量
+          // 排版：基准 / 差值 / 偏差 各占一行，避免挤在一行看不全
+          var bw = resolveBaseline();
+          if (bw != null && wVal != null) {
+            var curW = parseFloat(wVal);
+            var diff = curW - bw;
+            var dc = diff >= 0 ? '#e0533d' : '#2f9e6f';   // 正红负绿
+            var sign = diff >= 0 ? '+' : '';
+            var rows = '<div>基准 ' + bw.toFixed(3) + ' kg<span style="color:#9aa3b2;">（' + formatTime(state.baselineTime) + '）</span></div>';
+            rows += '<div style="margin-top:3px;">差值 <b style="color:' + dc + ';">' + sign + diff.toFixed(3) + ' kg</b></div>';
+            if (state.setWeight != null && !isNaN(state.setWeight) && state.setWeight !== 0) {
+              var ratio = (Math.abs(diff) - state.setWeight) / state.setWeight;
+              var rsign = ratio >= 0 ? '+' : '';
+              rows += '<div style="margin-top:3px;">偏差 <b>' + rsign + (ratio * 100).toFixed(2) + '%</b></div>';
+            }
+            html += '<div style="margin-top:4px; border-top:1px dashed #e4e8f0; padding-top:4px;">' + rows + '</div>';
+          }
+          html += '</div>';
+          return html;
         }
       },
       toolbox: {
-        right: 12, top: 0,
+        left: 'center', top: 0,
+        itemSize: 16,
+        itemGap: 8,
         feature: {
-          dataZoom: { yAxisIndex: 'none', title: { zoom: '框选放大', back: '还原' } },
-          restore: { title: '还原缩放' },
-          saveAsImage: { title: '保存图片', name: 'weight_chart' }
+          dataZoom: { yAxisIndex: 'none', title: { zoom: '框选放大' } },
+          saveAsImage: { title: '保存图片', name: 'weight_chart' },
+          myMarkLine: {
+            show: true,
+            title: '基准线',
+            name: '基准线',
+            icon: 'path://M2,14 L16,14 M10,8 L10,10 M10,18 L10,20',
+            onclick: function () {
+              if (state.baselineTime == null) {
+                // 还没基准 → 进入图上点选模式
+                enablePick();
+              } else {
+                // 已有基准 → 切换显隐
+                state.showBaseLine = !state.showBaseLine;
+                if (!state.showBaseLine) disablePick();
+                renderChart(true);
+              }
+              updateBaseLineUI();
+            }
+          }
         }
       },
       xAxis: {
@@ -381,21 +594,123 @@
         axisLine: { lineStyle: { color: '#c7cedb' } },
         axisLabel: { color: '#6b7686' }
       },
-      yAxis: {
-        type: 'value',
-        name: '重量 (kg)',
-        scale: true,
-        nameTextStyle: { color: '#6b7686' },
-        axisLabel: { color: '#6b7686', formatter: function (v) { return v.toFixed(2); } },
-        splitLine: { lineStyle: { color: '#eef1f6' } }
-      },
+      yAxis: auxActive ? [
+        {
+          type: 'value',
+          name: '重量 (kg)',
+          min: wMin,
+          max: wMax,
+          nameTextStyle: { color: '#6b7686' },
+          axisLabel: { color: '#6b7686', formatter: function (v) { return v.toFixed(2); } },
+          splitLine: { lineStyle: { color: '#eef1f6' } }
+        },
+        {
+          type: 'value',
+          name: colLabel(state.auxCol),
+          min: aMin,
+          max: aMax,
+          position: 'right',
+          nameTextStyle: { color: '#ff7a1a' },
+          axisLabel: { color: '#ff7a1a', formatter: function (v) { return v.toFixed(2); } },
+          splitLine: { show: false }
+        }
+      ] : [
+        {
+          type: 'value',
+          name: '重量 (kg)',
+          min: wMin,
+          max: wMax,
+          nameTextStyle: { color: '#6b7686' },
+          axisLabel: { color: '#6b7686', formatter: function (v) { return v.toFixed(2); } },
+          splitLine: { lineStyle: { color: '#eef1f6' } }
+        }
+      ],
       dataZoom: [
         { type: 'inside', filterMode: 'none', start: savedZoom ? savedZoom.start : 0, end: savedZoom ? savedZoom.end : 100 },
         { type: 'slider', filterMode: 'none', height: 22, bottom: 18, start: savedZoom ? savedZoom.start : 0, end: savedZoom ? savedZoom.end : 100 }
       ],
-      series: [series]
+      series: seriesArr
     };
     chart.setOption(opt, true);
+    // 图例里的「辅助折线」随开关切换
+    var legendAux = $('legendAux');
+    if (legendAux) legendAux.style.display = auxActive ? '' : 'none';
+    // 同步坐标轴输入区默认值 + 越界标红
+    syncAxisInputs(wRaw, aRaw);
+    // 图例当前值（末点）
+    updateLegendValues();
+  }
+
+  function updateLegendValues() {
+    function rangeOf(arr) {
+      if (!arr.length) return null;
+      var mn = Infinity, mx = -Infinity;
+      for (var i = 0; i < arr.length; i++) {
+        var v = arr[i][1];
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+      }
+      if (!isFinite(mn)) return null;
+      return { mn: mn, mx: mx };
+    }
+    var lw = $('legendW');
+    var la = $('legendA');
+    var wr = rangeOf(state.displayData);
+    if (lw) lw.textContent = wr ? wr.mn.toFixed(2) + '~' + wr.mx.toFixed(2) + ' kg' : '—';
+    var ar = rangeOf(state.auxData);
+    if (la) la.textContent = ar ? ar.mn.toFixed(3) + '~' + ar.mx.toFixed(3) : '—';
+  }
+
+  // 同步基准线提示文案（点选中 / 已设置 / 未设置）
+  function updateBaseLineUI() {
+    var hint = $('baselineHint');
+    if (!hint) return;
+    if (state.pickMode) {
+      hint.innerHTML = '<b style="color:#2f6fed;">请在折线图上点击一下</b>选定基准时间（基准重量取该点重量）';
+      return;
+    }
+    if (state.baselineTime) {
+      var bw = resolveBaseline();
+      if (state.showBaseLine) {
+        hint.innerHTML = '● 基准 <b>' + formatTime(state.baselineTime) + '</b> · 重量 ' +
+          (bw != null ? bw.toFixed(3) + ' kg' : '—') + '（点图表顶部图标可隐藏）';
+      } else {
+        hint.innerHTML = '基准已设但已隐藏（点图表顶部图标可显示）· ' + formatTime(state.baselineTime);
+      }
+    } else {
+      hint.innerHTML = '点「点选基准」或图表顶部图标，然后在图上点一下选定基准时间；「设定重量」用于算偏差比例。';
+    }
+  }
+
+  // 同步坐标轴手动输入框的值与越界标红状态
+  function syncAxisInputs(wRaw, aRaw) {
+    function fmt(v) { return v == null || !isFinite(v) ? '' : (Math.round(v * 100) / 100).toString(); }
+    function setVal(id, val, raw, minField, maxField) {
+      var el = $(id);
+      if (!el) return;
+      // 默认值 = 无余量（数据本身）
+      if (el.dataset.synced !== '1') {
+        el.value = fmt(val);
+        el.dataset.synced = '1';
+      }
+      var v = parseFloat(el.value);
+      var bad = false;
+      if (!isNaN(v) && raw) {
+        if (minField !== undefined && v > raw.min) bad = true;          // 手动最小 > 数据最小
+        if (maxField !== undefined && v < raw.max) bad = true;         // 手动最大 < 数据最大
+      }
+      el.classList.toggle('axis-bad', bad);
+    }
+    // 重量（左轴）
+    setVal('wMin', state.manualWMin, wRaw, 0, undefined);
+    setVal('wMax', state.manualWMax, wRaw, undefined, 0);
+    // 辅助（右轴）
+    var auxBox = $('auxAxisField');
+    if (auxBox) auxBox.style.display = state.auxCol >= 0 ? '' : 'none';
+    if (state.auxCol >= 0) {
+      setVal('aMin', state.manualAMin, aRaw, 0, undefined);
+      setVal('aMax', state.manualAMax, aRaw, undefined, 0);
+    }
   }
 
   function renderStats(range) {
@@ -478,7 +793,7 @@
     // 在当前视图内重新计算事件/平稳标记，保证与统计面板一致
     var viewRes = analyzeData(viewData);
 
-    var limit = Math.min(viewData.length, 300);
+    var limit = Math.min(viewData.length, 1000);
     var html = '<table><thead><tr><th class="l">#</th><th class="l">时间</th><th>重量(kg)</th><th class="l">标记</th></tr></thead><tbody>';
     for (var k = 0; k < limit; k++) {
       var idx = viewIdx[k];
@@ -507,38 +822,43 @@
     renderPreview(range);
   }
 
-  // ---------- 导出 ----------
-  function exportPng() {
-    if (!chart) return;
-    var url = chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#fff' });
-    var a = document.createElement('a');
-    a.href = url; a.download = 'weight_chart.png';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  // ---------- 坐标轴手动 min/max ----------
+  function onAxisInput(id, stateKey) {
+    return function (e) {
+      var v = parseFloat(e.target.value);
+      state[stateKey] = isNaN(v) ? null : v;   // 清空=默认
+      e.target.dataset.synced = '1';          // 标记已同步，避免 renderChart 覆盖用户输入
+      e.target.classList.remove('axis-bad');
+      updateAll(true);
+    };
   }
-
-  function exportCsv() {
-    var rows = state.parsed;
-    if (!rows.length) return;
-    var out = [['时间', '重量(kg)', '类型']];
-    for (var i = 0; i < rows.length; i++) {
-      var role;
-      if (state.isEvent[i]) role = state.eventType[i] === 'load' ? '上料' : '出料';
-      else if (state.stableFlags[i]) role = '平稳';
-      else role = '起点';
-      out.push([formatTime(rows[i].t), rows[i].w.toFixed(4), role]);
-    }
-    var csv = '\uFEFF' + out.map(function (r) { return r.join(','); }).join('\r\n');
-    downloadFile(csv, 'weight_data.csv', 'text/csv');
+  function resetAxis(which) {
+    var keys = which === 'w' ? ['manualWMin', 'manualWMax'] : ['manualAMin', 'manualAMax'];
+    keys.forEach(function (k) { state[k] = null; });
+    var ids = which === 'w' ? ['wMin', 'wMax'] : ['aMin', 'aMax'];
+    ids.forEach(function (id) { var el = $(id); if (el) el.dataset.synced = '0'; });
+    updateAll(true);
+  }
+  function clearAxisManual() {
+    ['manualWMin', 'manualWMax', 'manualAMin', 'manualAMax'].forEach(function (k) { state[k] = null; });
+    ['wMin', 'wMax', 'aMin', 'aMax'].forEach(function (id) {
+      var el = $(id); if (el) { el.dataset.synced = '0'; el.classList.remove('axis-bad'); }
+    });
   }
 
   // ---------- 事件绑定 ----------
   function bind() {
-    // 缩放/框选时实时刷新预览表为当前视图范围
+    // 缩放/框选时实时刷新预览表为当前视图范围；手动坐标轴值不再被缩放重置
     if (chart) {
       chart.on('datazoom', function () {
         var range = state.followZoom ? getCurrentRange() : null;
         renderStats(range);
         renderPreview(range);
+      });
+      // 点选基准：点选模式下在网格区内点击，取该处最近数据点时间为基准时间
+      chart.getZr().on('click', function (e) {
+        if (!state.pickMode) return;
+        pickBaselineAt(e.offsetX, e.offsetY);
       });
     }
     $('file').addEventListener('change', function (e) {
@@ -550,6 +870,10 @@
     });
     $('timeCol').addEventListener('change', function (e) { state.timeCol = +e.target.value; updateAll(); });
     $('weightCol').addEventListener('change', function (e) { state.weightCol = +e.target.value; updateAll(); });
+    $('auxCol').addEventListener('change', function (e) {
+      state.auxCol = +e.target.value;
+      updateAll(true);
+    });
     $('windowSec').addEventListener('input', function (e) {
       var v = parseFloat(e.target.value);
       if (isNaN(v) || v <= 0) { v = 1; e.target.value = v; }
@@ -560,17 +884,74 @@
       var v = parseFloat(e.target.value); state.deltaKg = isNaN(v) || v < 0 ? 0 : v; updateAll(true);
     });
     $('highlightStable').addEventListener('change', function (e) { state.highlightStable = e.target.checked; updateAll(true); });
+    // 坐标轴手动 min/max（仅全量视图生效，缩放时自动切默认）
+    $('wMin').addEventListener('input', onAxisInput('wMin', 'manualWMin'));
+    $('wMax').addEventListener('input', onAxisInput('wMax', 'manualWMax'));
+    $('aMin').addEventListener('input', onAxisInput('aMin', 'manualAMin'));
+    $('aMax').addEventListener('input', onAxisInput('aMax', 'manualAMax'));
+    $('wAxisReset').addEventListener('click', function () { resetAxis('w'); });
+    $('aAxisReset').addEventListener('click', function () { resetAxis('a'); });
+    // 基准线：点选基准 / 清除 / 设定重量
+    $('pickBaseline').addEventListener('click', function () {
+      if (state.pickMode) { disablePick(); updateBaseLineUI(); return; }
+      enablePick();
+    });
+    $('clearBaseline').addEventListener('click', function () {
+      state.showBaseLine = false;
+      state.baselineTime = null;
+      disablePick();
+      renderChart(true);
+      updateBaseLineUI();
+    });
+    $('setWeight').addEventListener('input', function (e) {
+      var v = parseFloat(e.target.value);
+      state.setWeight = isNaN(v) ? null : v;   // tooltip 每次悬浮实时读取，无需重渲染
+    });
     $('followZoom').addEventListener('change', function (e) {
       state.followZoom = e.target.checked;
       var range = e.target.checked ? getCurrentRange() : null;
       renderStats(range);
       renderPreview(range);
     });
-    $('resetZoom').addEventListener('click', function () {
-      if (chart) chart.dispatchAction({ type: 'restore' });
+    bindDropzone();
+  }
+
+  // ---------- 拖拽导入 ----------
+  var dragDepth = 0;
+  function bindDropzone() {
+    var dz = $('dropzone');
+    var accepts = /\.(xlsx|xls|csv)$/i;
+    document.addEventListener('dragenter', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      dragDepth++;
+      if (hasFile(e) && isAcceptable(e)) dz.classList.add('show');
     });
-    $('exportPng').addEventListener('click', exportPng);
-    $('exportCsv').addEventListener('click', exportCsv);
+    document.addEventListener('dragover', function (e) {
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.addEventListener('dragleave', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) dz.classList.remove('show');
+    });
+    document.addEventListener('drop', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      dragDepth = 0;
+      dz.classList.remove('show');
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      var f = files[0];
+      if (!isAcceptable(f)) { alert('暂不支持该文件类型，请拖入 .xlsx / .xls / .csv 文件'); return; }
+      handleFile(f);
+    });
+    function hasFile(e) {
+      var dt = e.dataTransfer;
+      return dt && dt.items && Array.prototype.some.call(dt.items, function (it) { return it.kind === 'file'; });
+    }
+    function isAcceptable(f) {
+      if (f && f.name) return accepts.test(f.name);
+      return true;
+    }
   }
 
   // ---------- 启动 ----------
