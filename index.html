@@ -105,6 +105,7 @@
 <header>
   <h1>重量波动折线图分析</h1>
   <span class="tag">离线版 · 数据不出本机</span>
+  <span class="tag" id="appVer">v—</span>
 </header>
 
 <div class="wrap">
@@ -191,6 +192,7 @@
 
     </div>
     <div class="hint" id="baselineHint" style="margin-top:7px;">点「点选基准」或图表顶部图标，然后在图上点一下选定基准时间；「设定重量」用于算偏差比例。</div>
+    <div class="hint" id="dragLog" style="margin-top:4px; color:#8a93a3;">拖拽日志：等待拖入文件…（把 .xlsx / .xls / .csv 从文件资源管理器拖到页面任意位置；若拖动无效，可 Ctrl+C 复制文件后在页面 Ctrl+V 粘贴）</div>
   </div>
 
   <div class="main">
@@ -218,6 +220,17 @@
 
 <script src="libs/echarts.min.js"></script>
 <script src="libs/xlsx.full.min.js"></script>
-<script src="app.js"></script>
+<script>
+  // app.js 带时间戳加载：绕开 GitHub Pages CDN 的 10 分钟缓存，保证每次刷新都拿到最新逻辑
+  (function () {
+    var s = document.createElement('script');
+    s.src = 'app.js?v=' + Date.now();
+    s.onerror = function () {
+      var el = document.getElementById('dragLog');
+      if (el) el.textContent = 'app.js 加载失败，请强制刷新（Ctrl+F5）后重试';
+    };
+    document.body.appendChild(s);
+  })();
+</script>
 </body>
 </html>

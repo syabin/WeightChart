@@ -2,6 +2,33 @@
 (function () {
   'use strict';
 
+  var APP_VERSION = '2026-09-20d';
+
+  // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
+  var dragLogs = [];
+  function logDrag(msg) {
+    var t = new Date();
+    var hh = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) + ':' + ('0' + t.getSeconds()).slice(-2);
+    dragLogs.push(hh + ' ' + msg);
+    if (dragLogs.length > 3) dragLogs.shift();
+    var el = document.getElementById('dragLog');
+    if (el) el.textContent = '拖拽日志：' + dragLogs.join(' ｜ ');
+    try { console.log('[拖拽] ' + msg); } catch (e) { }
+  }
+  // 把 dataTransfer 的关键信息摊平成一行文本
+  function dtInfo(e) {
+    var dt = e && e.dataTransfer;
+    if (!dt) return 'dataTransfer=无';
+    var types = [];
+    try { for (var i = 0; i < dt.types.length; i++) types.push(dt.types[i]); } catch (err) { }
+    var kinds = [];
+    try {
+      for (var j = 0; j < dt.items.length; j++) kinds.push(dt.items[j].kind + '/' + (dt.items[j].type || '?'));
+    } catch (err) { }
+    var nf = dt.files ? dt.files.length : '?';
+    return 'files=' + nf + ' types=[' + types.join(',') + '] items=[' + kinds.join(',') + ']';
+  }
+
   // ---------- 全局状态 ----------
   var state = {
     workbook: null,
@@ -189,11 +216,22 @@
           $('sheetField').style.display = 'none';
         }
         loadSheet(names[0]);
+        logDrag('✓ 解析完成：' + (file && file.name ? file.name : '') );
       } catch (err) {
+        logDrag('✗ 解析失败：' + err.message);
         alert('读取文件失败：' + err.message);
       }
     };
-    reader.readAsArrayBuffer(file);
+    reader.onerror = function () {
+      logDrag('✗ 文件读取失败（FileReader error）');
+      alert('文件读取失败，请确认文件未被其他程序占用后重试。');
+    };
+    try {
+      reader.readAsArrayBuffer(file);
+    } catch (err) {
+      logDrag('✗ readAsArrayBuffer 异常：' + err.message);
+      alert('文件读取失败：' + err.message);
+    }
   }
 
   function loadSheet(name) {
@@ -924,38 +962,48 @@
     document.addEventListener('dragenter', function (e) {
       e.preventDefault(); e.stopPropagation();
       dragDepth++;
-      if (hasFile(e)) dz.classList.add('show');
+      var ok = hasFile(e);
+      if (ok && dz) dz.classList.add('show');
+      logDrag('dragenter ' + dtInfo(e) + (ok ? ' · 识别为文件 ✓' : ' · 未识别为文件 ✗'));
     });
     document.addEventListener('dragover', function (e) {
       e.preventDefault(); e.stopPropagation();
-      if (hasFile(e)) dz.classList.add('show');
+      if (hasFile(e) && dz) dz.classList.add('show');
     });
     document.addEventListener('dragleave', function (e) {
       e.preventDefault(); e.stopPropagation();
       dragDepth = Math.max(0, dragDepth - 1);
-      if (dragDepth === 0) dz.classList.remove('show');
+      if (dragDepth === 0 && dz) dz.classList.remove('show');
     });
     document.addEventListener('drop', function (e) {
       e.preventDefault(); e.stopPropagation();
       dragDepth = 0;
-      dz.classList.remove('show');
-      var all = collectFiles(e);
-      if (!all.length) {
-        // 常见误操作：从 Excel 里拖选中的单元格内容 —— 那不是文件，页面上收不到文件
-        alert('没有检测到文件。\n请从「文件资源管理器 / 访达」里把 .xlsx / .xls / .csv 文件拖进页面；\n从 Excel 里拖选中的单元格不算文件。');
-        return;
+      if (dz) dz.classList.remove('show');
+      try {
+        var all = collectFiles(e);
+        logDrag('drop ' + dtInfo(e) + ' → 取到 ' + all.length + ' 个文件');
+        if (!all.length) {
+          // 常见误操作：从 Excel 里拖选中的单元格内容 —— 那不是文件，页面上收不到文件
+          logDrag('✗ 没有文件对象，已终止');
+          alert('没有检测到文件。\n请从「文件资源管理器 / 访达」里把 .xlsx / .xls / .csv 文件拖进页面；\n从 Excel 里拖选中的单元格不算文件。');
+          return;
+        }
+        var f = null;
+        for (var i = 0; i < all.length; i++) { if (accepts.test(all[i].name || '')) { f = all[i]; break; } }
+        if (!f) {
+          logDrag('✗ 类型不支持：' + (all[0].name || '未知'));
+          alert('暂不支持该文件类型，请拖入 .xlsx / .xls / .csv 文件。\n（收到：' + (all[0].name || '未知文件') + '）');
+          return;
+        }
+        if (all.length > 1) {
+          logDrag('多选 ' + all.length + ' 个，取「' + f.name + '」，其余忽略');
+        }
+        logDrag('→ 交给解析：' + f.name + (f.size ? '（' + Math.round(f.size / 1024) + ' KB）' : ''));
+        handleFile(f);
+      } catch (err) {
+        logDrag('✗ drop 处理出错：' + err.message);
+        alert('拖拽导入出错：' + err.message);
       }
-      var f = null;
-      for (var i = 0; i < all.length; i++) { if (accepts.test(all[i].name || '')) { f = all[i]; break; } }
-      if (!f) {
-        alert('暂不支持该文件类型，请拖入 .xlsx / .xls / .csv 文件。\n（收到：' + (all[0].name || '未知文件') + '）');
-        return;
-      }
-      if (all.length > 1) {
-        console.log('拖入 ' + all.length + ' 个文件，已使用第一个可识别的：' + f.name +
-          '（另有 ' + (all.length - 1) + ' 个被忽略）');
-      }
-      handleFile(f);
     });
 
     // 收集拖入的文件：优先 dataTransfer.files；网盘等虚拟文件走 items.getAsFile()
@@ -989,11 +1037,37 @@
       }
       return false;
     }
+
+    // 兜底入口：在资源管理器 Ctrl+C 复制文件 → 页面里 Ctrl+V 粘贴导入
+    // （Windows 下浏览器以管理员身份运行、或企业策略禁用跨窗口拖放时，拖拽会失效，粘贴仍可用）
+    document.addEventListener('paste', function (e) {
+      try {
+        var cd = e.clipboardData;
+        if (!cd || !cd.files || !cd.files.length) return;   // 粘贴的是文本/表格，不处理
+        var f = null;
+        for (var i = 0; i < cd.files.length; i++) {
+          if (accepts.test(cd.files[i].name || '')) { f = cd.files[i]; break; }
+        }
+        if (!f) { logDrag('✗ 粘贴的文件类型不支持：' + (cd.files[0].name || '未知')); return; }
+        logDrag('✓ 粘贴导入：' + f.name);
+        handleFile(f);
+      } catch (err) { logDrag('✗ 粘贴处理出错：' + err.message); }
+    });
   }
 
   // ---------- 启动 ----------
-  document.addEventListener('DOMContentLoaded', function () {
+  // 注：index.html 用动态 <script> 带时间戳加载本文件（破 CDN 缓存），
+  //     动态脚本可能在 DOMContentLoaded 之后才执行，故需按 readyState 判断。
+  function start() {
     initChart();
     bind();
-  });
+    var v = document.getElementById('appVer');
+    if (v) v.textContent = 'v' + APP_VERSION;
+    try { console.log('[WeightChart] app.js v' + APP_VERSION + ' 已加载，拖拽监听已就绪'); } catch (e) { }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
 })();
