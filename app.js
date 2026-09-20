@@ -924,10 +924,11 @@
     document.addEventListener('dragenter', function (e) {
       e.preventDefault(); e.stopPropagation();
       dragDepth++;
-      if (hasFile(e) && isAcceptable(e)) dz.classList.add('show');
+      if (hasFile(e)) dz.classList.add('show');
     });
     document.addEventListener('dragover', function (e) {
       e.preventDefault(); e.stopPropagation();
+      if (hasFile(e)) dz.classList.add('show');
     });
     document.addEventListener('dragleave', function (e) {
       e.preventDefault(); e.stopPropagation();
@@ -938,19 +939,55 @@
       e.preventDefault(); e.stopPropagation();
       dragDepth = 0;
       dz.classList.remove('show');
-      var files = e.dataTransfer && e.dataTransfer.files;
-      if (!files || !files.length) return;
-      var f = files[0];
-      if (!isAcceptable(f)) { alert('暂不支持该文件类型，请拖入 .xlsx / .xls / .csv 文件'); return; }
+      var all = collectFiles(e);
+      if (!all.length) {
+        // 常见误操作：从 Excel 里拖选中的单元格内容 —— 那不是文件，页面上收不到文件
+        alert('没有检测到文件。\n请从「文件资源管理器 / 访达」里把 .xlsx / .xls / .csv 文件拖进页面；\n从 Excel 里拖选中的单元格不算文件。');
+        return;
+      }
+      var f = null;
+      for (var i = 0; i < all.length; i++) { if (accepts.test(all[i].name || '')) { f = all[i]; break; } }
+      if (!f) {
+        alert('暂不支持该文件类型，请拖入 .xlsx / .xls / .csv 文件。\n（收到：' + (all[0].name || '未知文件') + '）');
+        return;
+      }
+      if (all.length > 1) {
+        console.log('拖入 ' + all.length + ' 个文件，已使用第一个可识别的：' + f.name +
+          '（另有 ' + (all.length - 1) + ' 个被忽略）');
+      }
       handleFile(f);
     });
+
+    // 收集拖入的文件：优先 dataTransfer.files；网盘等虚拟文件走 items.getAsFile()
+    function collectFiles(e) {
+      var dt = e.dataTransfer;
+      if (!dt) return [];
+      var out = [];
+      if (dt.files && dt.files.length) {
+        out = Array.prototype.slice.call(dt.files, 0);
+      } else if (dt.items) {
+        for (var i = 0; i < dt.items.length; i++) {
+          var it = dt.items[i];
+          if (it && it.kind === 'file' && it.getAsFile) {
+            var f = it.getAsFile();
+            if (f) out.push(f);
+          }
+        }
+      }
+      return out;
+    }
+
+    // 是否真的拖了文件：types 含 'Files' 或 items 里有 kind=file
     function hasFile(e) {
       var dt = e.dataTransfer;
-      return dt && dt.items && Array.prototype.some.call(dt.items, function (it) { return it.kind === 'file'; });
-    }
-    function isAcceptable(f) {
-      if (f && f.name) return accepts.test(f.name);
-      return true;
+      if (!dt) return false;
+      if (dt.types && Array.prototype.indexOf.call(dt.types, 'Files') >= 0) return true;
+      if (dt.items && dt.items.length) {
+        for (var i = 0; i < dt.items.length; i++) {
+          if (dt.items[i] && dt.items[i].kind === 'file') return true;
+        }
+      }
+      return false;
     }
   }
 
