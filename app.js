@@ -2,17 +2,21 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-09-20e';
+  var APP_VERSION = '2026-09-20f';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
+  // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
   var dragLogs = [];
-  function logDrag(msg) {
+  function logDrag(msg, forceShow) {
     var t = new Date();
     var hh = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) + ':' + ('0' + t.getSeconds()).slice(-2);
     dragLogs.push(hh + ' ' + msg);
-    if (dragLogs.length > 3) dragLogs.shift();
+    if (dragLogs.length > 4) dragLogs.shift();
     var el = document.getElementById('dragLog');
-    if (el) el.textContent = '拖拽日志：' + dragLogs.join(' ｜ ');
+    if (el) {
+      el.textContent = '拖拽日志：' + dragLogs.join(' ｜ ');
+      if (forceShow) el.style.display = '';   // 异常时自动现身，不必手动点
+    }
     try { console.log('[拖拽] ' + msg); } catch (e) { }
   }
   // 把 dataTransfer 的关键信息摊平成一行文本
@@ -216,20 +220,20 @@
           $('sheetField').style.display = 'none';
         }
         loadSheet(names[0]);
-        logDrag('✓ 解析完成：' + (file && file.name ? file.name : '') );
+        logDrag('✓ 解析完成：' + (file && file.name ? file.name : ''));
       } catch (err) {
-        logDrag('✗ 解析失败：' + err.message);
+        logDrag('✗ 解析失败：' + err.message, true);
         alert('读取文件失败：' + err.message);
       }
     };
     reader.onerror = function () {
-      logDrag('✗ 文件读取失败（FileReader error）');
+      logDrag('✗ 文件读取失败（FileReader error）', true);
       alert('文件读取失败，请确认文件未被其他程序占用后重试。');
     };
     try {
       reader.readAsArrayBuffer(file);
     } catch (err) {
-      logDrag('✗ readAsArrayBuffer 异常：' + err.message);
+      logDrag('✗ readAsArrayBuffer 异常：' + err.message, true);
       alert('文件读取失败：' + err.message);
     }
   }
@@ -964,7 +968,8 @@
       dragDepth++;
       var ok = hasFile(e);
       if (ok && dz) dz.classList.add('show');
-      logDrag('dragenter ' + dtInfo(e) + (ok ? ' · 识别为文件 ✓' : ' · 未识别为文件 ✗'));
+      // 拖进来的不是文件对象（例如从 Excel 拖单元格）→ 直接把日志亮出来
+      logDrag('dragenter ' + dtInfo(e) + (ok ? ' · 识别为文件 ✓' : ' · 未识别为文件 ✗'), !ok);
     });
     document.addEventListener('dragover', function (e) {
       e.preventDefault(); e.stopPropagation();
@@ -984,14 +989,14 @@
         logDrag('drop ' + dtInfo(e) + ' → 取到 ' + all.length + ' 个文件');
         if (!all.length) {
           // 常见误操作：从 Excel 里拖选中的单元格内容 —— 那不是文件，页面上收不到文件
-          logDrag('✗ 没有文件对象，已终止');
+          logDrag('✗ 没有文件对象，已终止', true);
           alert('没有检测到文件。\n请从「文件资源管理器 / 访达」里把 .xlsx / .xls / .csv 文件拖进页面；\n从 Excel 里拖选中的单元格不算文件。');
           return;
         }
         var f = null;
         for (var i = 0; i < all.length; i++) { if (accepts.test(all[i].name || '')) { f = all[i]; break; } }
         if (!f) {
-          logDrag('✗ 类型不支持：' + (all[0].name || '未知'));
+          logDrag('✗ 类型不支持：' + (all[0].name || '未知'), true);
           alert('暂不支持该文件类型，请拖入 .xlsx / .xls / .csv 文件。\n（收到：' + (all[0].name || '未知文件') + '）');
           return;
         }
@@ -1001,7 +1006,7 @@
         logDrag('→ 交给解析：' + f.name + (f.size ? '（' + Math.round(f.size / 1024) + ' KB）' : ''));
         handleFile(f);
       } catch (err) {
-        logDrag('✗ drop 处理出错：' + err.message);
+        logDrag('✗ drop 处理出错：' + err.message, true);
         alert('拖拽导入出错：' + err.message);
       }
     });
@@ -1073,6 +1078,13 @@
       });
     }
     try { console.log('[WeightChart] app.js v' + APP_VERSION + ' 已加载，拖拽监听已就绪（点标题旁版本徽标可显示拖拽日志）'); } catch (e) { }
+    // URL 带 debug 时日志常显，例如 index.html?debug —— 方便远程排查
+    try {
+      if (location.search.indexOf('debug') >= 0 || location.hash.indexOf('debug') >= 0) {
+        var dl = document.getElementById('dragLog');
+        if (dl) dl.style.display = '';
+      }
+    } catch (e) { }
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
