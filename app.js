@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-09-22f';
+  var APP_VERSION = '2026-09-22g';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -616,7 +616,10 @@
             var diff = curW - bw;
             var dc = diff >= 0 ? '#e0533d' : '#2f9e6f';   // 正红负绿
             var sign = diff >= 0 ? '+' : '';
-            var rows = '<div>设定 ' + bw.toFixed(3) + ' kg<span style="color:#9aa3b2;">（' + formatTime(state.baselineTime) + '）</span></div>';
+            var rows = '<div>基准 ' + bw.toFixed(3) + ' kg<span style="color:#9aa3b2;">（' + formatTime(state.baselineTime) + '）</span></div>';
+            if (state.setWeight != null && !isNaN(state.setWeight)) {
+              rows += '<div style="margin-top:3px;">设定 <b>' + state.setWeight.toFixed(3) + ' kg</b></div>';
+            }
             rows += '<div style="margin-top:3px;">差值 <b style="color:' + dc + ';">' + sign + diff.toFixed(3) + ' kg</b></div>';
             if (state.setWeight != null && !isNaN(state.setWeight) && state.setWeight !== 0) {
               var gap = Math.abs(diff) - state.setWeight;
