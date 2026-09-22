@@ -594,6 +594,9 @@
             var rows = '<div>基准 ' + bw.toFixed(3) + ' kg<span style="color:#9aa3b2;">（' + formatTime(state.baselineTime) + '）</span></div>';
             rows += '<div style="margin-top:3px;">差值 <b style="color:' + dc + ';">' + sign + diff.toFixed(3) + ' kg</b></div>';
             if (state.setWeight != null && !isNaN(state.setWeight) && state.setWeight !== 0) {
+              var gap = Math.abs(diff) - state.setWeight;
+              var gsign = gap >= 0 ? '+' : '';
+              rows += '<div style="margin-top:3px;">差距 <b>' + gsign + gap.toFixed(3) + ' kg</b></div>';
               var ratio = (Math.abs(diff) - state.setWeight) / state.setWeight;
               var rsign = ratio >= 0 ? '+' : '';
               rows += '<div style="margin-top:3px;">偏差 <b>' + rsign + (ratio * 100).toFixed(3) + '%</b></div>';
