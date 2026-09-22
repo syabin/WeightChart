@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-09-22a';
+  var APP_VERSION = '2026-09-22c';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -45,6 +45,7 @@
     deltaKg: 0.01,
     highlightStable: true,
     followZoom: true,
+    stepLine: false,        // true = 阶梯显示（step:end，数值保持到下一采样点再垂直跳变）
     // 手动坐标轴：null = 跟随默认（无余量），数字 = 手动值（全程保留，不随缩放重置）
     manualWMin: null, manualWMax: null,
     manualAMin: null, manualAMax: null,
@@ -479,6 +480,7 @@
       yAxisIndex: 0,
       showSymbol: false,
       smooth: false,
+      step: state.stepLine ? 'end' : false,
       large: true,
       largeThreshold: 2000,
       animation: false,
@@ -497,6 +499,7 @@
         yAxisIndex: 1,
         showSymbol: false,
         smooth: false,
+        step: state.stepLine ? 'end' : false,
         animation: false,
         z: 2,                 // 放在重量线（z:3）下层，避免遮挡
         data: auxData,
@@ -954,6 +957,10 @@
       var range = e.target.checked ? getCurrentRange() : null;
       renderStats(range);
       renderPreview(range);
+    });
+    $('stepLine').addEventListener('change', function (e) {
+      state.stepLine = e.target.checked;
+      renderChart(true);
     });
     bindDropzone();
   }
