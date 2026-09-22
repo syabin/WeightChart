@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-09-20f';
+  var APP_VERSION = '2026-09-22a';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -593,7 +593,7 @@
             if (state.setWeight != null && !isNaN(state.setWeight) && state.setWeight !== 0) {
               var ratio = (Math.abs(diff) - state.setWeight) / state.setWeight;
               var rsign = ratio >= 0 ? '+' : '';
-              rows += '<div style="margin-top:3px;">偏差 <b>' + rsign + (ratio * 100).toFixed(2) + '%</b></div>';
+              rows += '<div style="margin-top:3px;">偏差 <b>' + rsign + (ratio * 100).toFixed(3) + '%</b></div>';
             }
             html += '<div style="margin-top:4px; border-top:1px dashed #e4e8f0; padding-top:4px;">' + rows + '</div>';
           }
