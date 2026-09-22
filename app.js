@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-09-22h';
+  var APP_VERSION = '2026-09-22i';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -53,6 +53,7 @@
     baselineTime: null,     // Date | null，在图上点选得到；基准重量自动取该时间点重量
     setWeight: null,        // Number | null，设定重量（用于计算偏差比例）
     pickMode: false,        // true = 正在等待用户在图上点选基准时间
+    rateMode: false,        // true = 速率框选模式（拖拽框选一段算重量变化速率 kg/min）
     parsed: [],          // [{t:Date, w:Number, a:Number|null}]
     displayData: [],     // [[Number(ms), Number]] 用于 ECharts 绘制
     auxData: [],         // [[Number(ms), Number], ...] 辅助列绘制
@@ -93,6 +94,70 @@
   function disablePick() {
     state.pickMode = false;
     if (chart) { try { chart.getZr().setCursorStyle('default'); } catch (e) { } }
+  }
+
+  // ---------- 变化速率框选模式 ----------
+  var rateDrag = null;    // {x0,y0} 拖拽起点像素
+  function ensureRateRect() {
+    var el = $('rateRect');
+    if (el) return el;
+    var host = $('chart');
+    if (!host) return null;
+    host.style.position = 'relative';
+    el = document.createElement('div');
+    el.id = 'rateRect';
+    el.style.cssText = 'position:absolute; display:none; pointer-events:none;'
+      + 'border:1px dashed #2f6fed; background:rgba(47,111,237,0.10); z-index:5;';
+    host.appendChild(el);
+    return el;
+  }
+  function hideRateRect() {
+    var el = $('rateRect');
+    if (el) el.style.display = 'none';
+  }
+  function enableRate() {
+    if (!chart || !state.parsed.length) return;
+    disablePick();
+    state.rateMode = true;
+    try { chart.getZr().setCursorStyle('crosshair'); } catch (e) { }
+    var hint = $('rateHint');
+    if (hint) {
+      hint.style.display = '';
+      hint.innerHTML = '<b style="color:#2f6fed;">请在折线图上按下并横向拖拽</b>框选一段，松开后计算该段重量变化速率（kg/min）';
+    }
+  }
+  function disableRate() {
+    state.rateMode = false;
+    rateDrag = null;
+    hideRateRect();
+    if (chart) { try { chart.getZr().setCursorStyle('default'); } catch (e) { } }
+  }
+  // 按框选的时间范围取首末数据点，算速率 = Δ重量 / Δ时间(min)
+  function computeRateForRange(t1ms, t2ms) {
+    var hint = $('rateHint');
+    if (!hint || !state.parsed.length) return;
+    var lo = Math.min(t1ms, t2ms), hi = Math.max(t1ms, t2ms);
+    var first = null, last = null;
+    for (var i = 0; i < state.parsed.length; i++) {
+      var ms = state.parsed[i].t.getTime();
+      if (ms < lo) continue;
+      if (ms > hi) break;
+      if (!first) first = state.parsed[i];
+      last = state.parsed[i];
+    }
+    if (!first || !last || first === last) {
+      hint.innerHTML = '<span style="color:#e0533d;">框选范围太短，未覆盖足够数据点</span>（重新拖拽框选，或再点「变化速率」按钮退出）';
+      return;
+    }
+    var mins = (last.t.getTime() - first.t.getTime()) / 60000;
+    var dw = last.w - first.w;
+    var rate = dw / mins;
+    var c = rate >= 0 ? '#e0533d' : '#2f9e6f';   // 正红负绿，与差值一致
+    var s = rate >= 0 ? '+' : '';
+    hint.innerHTML = '● 变化速率 <b style="color:' + c + ';">' + s + rate.toFixed(3) + ' kg/min</b>'
+      + '<span style="color:#9aa3b2;">（' + formatTime(first.t) + ' → ' + formatTime(last.t)
+      + '，Δ ' + (dw >= 0 ? '+' : '') + dw.toFixed(3) + ' kg ÷ ' + mins.toFixed(2) + ' min）</span>'
+      + '（再次拖拽可重算，再点「变化速率」按钮退出）';
   }
 
   // 进入点选模式：光标变十字，等待用户在图上点击
@@ -664,6 +729,16 @@
               }
               updateBaseLineUI();
             }
+          },
+          myRate: {
+            show: true,
+            title: '变化速率',
+            name: '变化速率',
+            icon: 'path://M3,17 L15,5 M10,5 h5 v5',
+            onclick: function () {
+              if (state.rateMode) disableRate();
+              else enableRate();
+            }
           }
         }
       },
@@ -940,6 +1015,41 @@
       chart.getZr().on('click', function (e) {
         if (!state.pickMode) return;
         pickBaselineAt(e.offsetX, e.offsetY);
+      });
+      // 变化速率：框选拖拽（mousedown 限定网格区内；松手换算时间范围并计算）
+      chart.getZr().on('mousedown', function (e) {
+        if (!state.rateMode) return;
+        if (!chart.containPixel({ gridIndex: 0 }, [e.offsetX, e.offsetY])) return;
+        rateDrag = { x0: e.offsetX, y0: e.offsetY };
+      });
+      chart.getZr().on('mousemove', function (e) {
+        if (!state.rateMode || !rateDrag) return;
+        var el = ensureRateRect();
+        if (!el) return;
+        el.style.display = 'block';
+        el.style.left = Math.min(rateDrag.x0, e.offsetX) + 'px';
+        el.style.top = Math.min(rateDrag.y0, e.offsetY) + 'px';
+        el.style.width = Math.abs(e.offsetX - rateDrag.x0) + 'px';
+        el.style.height = Math.abs(e.offsetY - rateDrag.y0) + 'px';
+      });
+      chart.getZr().on('mouseup', function (e) {
+        if (!state.rateMode || !rateDrag) return;
+        var x1 = Math.min(rateDrag.x0, e.offsetX), x2 = Math.max(rateDrag.x0, e.offsetX);
+        rateDrag = null;
+        hideRateRect();
+        if (x2 - x1 < 3) {
+          var hint = $('rateHint');
+          if (hint) hint.innerHTML = '<span style="color:#e0533d;">拖拽距离太短</span>（请在图上按下并横向拖拽一段）';
+          return;
+        }
+        var p1 = chart.convertFromPixel({ gridIndex: 0 }, [x1, 0]);
+        var p2 = chart.convertFromPixel({ gridIndex: 0 }, [x2, 0]);
+        if (!p1 || !p2 || !isFinite(+p1[0]) || !isFinite(+p2[0])) return;
+        computeRateForRange(+p1[0], +p2[0]);
+      });
+      window.addEventListener('mouseup', function () {
+        // 拖拽中途移出画布松开：仅取消本次框选
+        if (rateDrag) { rateDrag = null; hideRateRect(); }
       });
     }
     $('file').addEventListener('change', function (e) {
