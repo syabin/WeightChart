@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-09-22g';
+  var APP_VERSION = '2026-09-22h';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -617,17 +617,22 @@
             var dc = diff >= 0 ? '#e0533d' : '#2f9e6f';   // 正红负绿
             var sign = diff >= 0 ? '+' : '';
             var rows = '<div>基准 ' + bw.toFixed(3) + ' kg<span style="color:#9aa3b2;">（' + formatTime(state.baselineTime) + '）</span></div>';
-            if (state.setWeight != null && !isNaN(state.setWeight)) {
-              rows += '<div style="margin-top:3px;">设定 <b>' + state.setWeight.toFixed(3) + ' kg</b></div>';
-            }
-            rows += '<div style="margin-top:3px;">差值 <b style="color:' + dc + ';">' + sign + diff.toFixed(3) + ' kg</b></div>';
             if (state.setWeight != null && !isNaN(state.setWeight) && state.setWeight !== 0) {
               var gap = Math.abs(diff) - state.setWeight;
               var gsign = gap >= 0 ? '+' : '';
-              rows += '<div style="margin-top:3px;">差距 <b>' + gsign + gap.toFixed(3) + ' kg</b></div>';
               var ratio = (Math.abs(diff) - state.setWeight) / state.setWeight;
               var rsign = ratio >= 0 ? '+' : '';
-              rows += '<div style="margin-top:3px;">偏差 <b>' + rsign + (ratio * 100).toFixed(3) + '%</b></div>';
+              // 设定 / 差值 / 差距 / 偏差 分两列显示
+              rows += '<div style="display:flex; gap:18px; margin-top:4px;">'
+                + '<div style="flex:1;">设定 <b>' + state.setWeight.toFixed(3) + ' kg</b></div>'
+                + '<div style="flex:1;">差值 <b style="color:' + dc + ';">' + sign + diff.toFixed(3) + ' kg</b></div>'
+                + '</div>';
+              rows += '<div style="display:flex; gap:18px; margin-top:3px;">'
+                + '<div style="flex:1;">差距 <b>' + gsign + gap.toFixed(3) + ' kg</b></div>'
+                + '<div style="flex:1;">偏差 <b>' + rsign + (ratio * 100).toFixed(3) + '%</b></div>'
+                + '</div>';
+            } else {
+              rows += '<div style="margin-top:3px;">差值 <b style="color:' + dc + ';">' + sign + diff.toFixed(3) + ' kg</b></div>';
             }
             html += '<div style="margin-top:4px; border-top:1px dashed #e4e8f0; padding-top:4px;">' + rows + '</div>';
           }
