@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-09-22c';
+  var APP_VERSION = '2026-09-22e';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -563,6 +563,31 @@
         backgroundColor: 'rgba(255,255,255,0.96)',
         borderColor: '#e4e8f0',
         textStyle: { color: '#1f2733' },
+        // 自动避开折线：根据悬浮数据点的像素位置决定 tooltip 放上方还是下方，并做容器边缘翻转
+        position: function (point, params, dom, rect, size) {
+          var cw = size.contentSize[0], ch = size.contentSize[1];
+          var vw = size.viewSize[0], vh = size.viewSize[1];
+          var x = point[0] + 16, y = point[1] - 18;
+          try {
+            var p0 = params && params[0];
+            if (p0 && p0.data && chart) {
+              var pt = chart.convertToPixel({ seriesIndex: p0.seriesIndex }, [p0.data[0], p0.data[1]]);
+              if (pt) {
+                var py = pt[1];
+                if (Math.abs(point[1] - py) < ch + 24) {
+                  // 鼠标太靠近线：线在上 → tooltip 放下方；线在下 → 放上方
+                  if (py < point[1]) y = point[1] + 18;
+                  else y = point[1] - ch - 18;
+                }
+              }
+            }
+          } catch (e) { }
+          if (x + cw > vw - 8) x = point[0] - cw - 16;   // 右边放不下 → 翻到左侧
+          if (x < 8) x = 8;
+          if (y + ch > vh - 8) y = point[1] - ch - 18;   // 下边放不下 → 翻到上方
+          if (y < 8) y = 8;
+          return [x, y];
+        },
         formatter: function (params) {
           if (!params || !params.length) return '';
           var p = params[0];
