@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-09-22k';
+  var APP_VERSION = '2026-09-22l';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -51,6 +51,7 @@
     manualAMin: null, manualAMax: null,
     showBaseLine: false,    // 基准线默认不显示，点工具栏「基准线」按钮才显示
     baselineTime: null,     // Date | null，在图上点选得到；基准重量自动取该时间点重量
+    initZoom: null,         // {start,end} 或 null：载入数据集时「初始缩放」快照；双击还原按钮回到这里
     setWeight: null,        // Number | null，设定重量（用于计算偏差比例）
     pickMode: false,        // true = 正在等待用户在图上点选基准时间
     rateMode: false,        // true = 速率点选模式（在图上点前后两个点算重量变化速率 kg/min）
@@ -345,6 +346,11 @@
     while (rows.length && rows[rows.length - 1].every(function (c) { return c == null || c === ''; })) rows.pop();
     state.rows = rows;
 
+    // 大数据量保护：超过阈值弹确认，避免误拖巨文件直接爆栈（16 万级不会触发）
+    if (rows.length > 500000 && !window.confirm('当前工作表约 ' + rows.length.toLocaleString() + ' 行，数据量很大，可能出现卡顿甚至崩溃。仍要继续加载吗？')) {
+      return;
+    }
+
     var cc = 0;
     rows.forEach(function (r) { if (r && r.length > cc) cc = r.length; });
     state.colCount = cc;
@@ -598,6 +604,8 @@
         showSymbol: false,
         smooth: false,
         step: state.stepLine ? 'end' : false,
+        large: true,          // 与重量线一致，大数据量开启优化模式，避免超大文件渲染/交互时爆栈
+        largeThreshold: 2000,
         animation: false,
         z: 2,                 // 放在重量线（z:3）下层，避免遮挡
         data: auxData,
@@ -771,6 +779,16 @@
             onclick: function () {
               if (state.rateMode) disableRate(false);
               else enableRate();
+            }
+          },
+          myZoomReset: {
+            show: true,
+            title: '缩放还原',
+            name: '缩放还原',
+            icon: 'path://M10,1 L1,10 L10,19 L19,10 Z M10,5 L15,10 L10,15 L5,10 Z',
+            onclick: function () {
+              // 单击：不还原（按钮只作双击目标）；双击命中 toolbox 才调 restoreChartZoom
+              // 见 bind() 里 #chart 的 dblclick 监听。
             }
           }
         }
@@ -972,6 +990,17 @@
     return [s, e];
   }
 
+  // 还原到「初始缩放」：把 inside + slider 两个 dataZoom 都派回 0/100（全量时间轴），
+  // 再同步刷新统计/预览（跟随放大开着时统计是跟当前视图走的，必须重算）。
+  function restoreChartZoom() {
+    if (!chart) return;
+    chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 0, start: 0, end: 100 });
+    chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 1, start: 0, end: 100 });
+    var range = state.followZoom ? getCurrentRange() : null;
+    renderStats(range);
+    renderPreview(range);
+  }
+
   function renderPreview(range) {
     var box = $('preview');
     var rows = state.parsed;
@@ -1065,6 +1094,20 @@
         if (state.pickMode) { pickBaselineAt(e.offsetX, e.offsetY); return; }
         if (state.rateMode) pickRateAt(e.offsetX, e.offsetY);
       });
+      // 双击「缩放还原」按钮：ECharts 自定义 feature 只吃单击，
+      // 这里监听 #chart 容器的 dblclick，判断双击点落在 toolbox 区（图表顶部一条）就还原。
+      var chartHost = $('chart');
+      if (chartHost) {
+        chartHost.addEventListener('dblclick', function (e) {
+          var rect = chartHost.getBoundingClientRect();
+          var y = e.clientY - rect.top;
+          // toolbox 顶部一条（itemSize 16 + 顶部留白），约前 34px 是按钮区
+          if (y < 34) {
+            e.preventDefault();
+            restoreChartZoom();
+          }
+        });
+      }
     }
     $('file').addEventListener('change', function (e) {
       if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
