@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-10-26c';
+  var APP_VERSION = '2026-10-26d';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -387,8 +387,8 @@
     // 有表头时把列标题名带上（列字母·标题名），无表头退回纯列字母
     var header = (state.hasHeader && state.rows.length) ? state.rows[0] : null;
     for (var c = 0; c < state.colCount; c++) {
-      var titleOf = (header && header[c] != null) ? String(header[c]).trim() : '';
-      var label = titleOf !== '' ? (colLabel(c) + ' · ' + titleOf) : colLabel(c);
+      // colLabel(c) 已按「有表头→列字母·表头名 / 无表头→纯列字母」返回，勿再重复拼表头名
+      var label = colLabel(c);
       var o1 = document.createElement('option'); o1.value = String(c); o1.textContent = label; o1.title = label;
       var o2 = document.createElement('option'); o2.value = String(c); o2.textContent = label; o2.title = label;
       var o3 = document.createElement('option'); o3.value = String(c); o3.textContent = label; o3.title = label;
