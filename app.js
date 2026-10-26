@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-09-22l';
+  var APP_VERSION = '2026-10-26a';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -491,6 +491,11 @@
     };
   }
 
+  // 安全求最值：避免 Math.max.apply(null, 超大数组) 在数据量大时因参数压栈导致 Maximum call stack size exceeded
+  function arrMaxW(data) { var m = -Infinity; for (var i = 0; i < data.length; i++) { if (data[i].w > m) m = data[i].w; } return m; }
+  function arrMinW(data) { var m = Infinity; for (var i = 0; i < data.length; i++) { if (data[i].w < m) m = data[i].w; } return m; }
+  function arrMaxMag(events) { var m = -Infinity; for (var i = 0; i < events.length; i++) { if (events[i].mag > m) m = events[i].mag; } return m; }
+
   function calcStats(data, events) {
     var n = data.length;
     var loads = events.filter(function (e) { return e.type === 'load'; });
@@ -500,9 +505,9 @@
       loads: loads.length,
       unloads: unloads.length,
       net: n ? data[n - 1].w - data[0].w : 0,
-      max: n ? Math.max.apply(null, data.map(function (d) { return d.w; })) : 0,
-      min: n ? Math.min.apply(null, data.map(function (d) { return d.w; })) : 0,
-      maxMag: events.length ? Math.max.apply(null, events.map(function (e) { return e.mag; })) : 0,
+      max: n ? arrMaxW(data) : 0,
+      min: n ? arrMinW(data) : 0,
+      maxMag: events.length ? arrMaxMag(events) : 0,
       points: n
     };
   }
