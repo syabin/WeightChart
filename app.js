@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-10-26b';
+  var APP_VERSION = '2026-10-26c';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -796,8 +796,9 @@
             name: '缩放还原',
             icon: 'path://M10,1 L1,10 L10,19 L19,10 Z M10,5 L15,10 L10,15 L5,10 Z',
             onclick: function () {
-              // 单击：不还原（按钮只作双击目标）；双击命中 toolbox 才调 restoreChartZoom
-              // 见 bind() 里 #chart 的 dblclick 监听。
+              // 单击即可一键复位：把两个 dataZoom 都派回 0/100（全量时间轴），
+              // 并同步刷新统计/预览。不再依赖双击图表顶部那条隐藏操作。
+              restoreChartZoom();
             }
           }
         }
@@ -1103,20 +1104,6 @@
         if (state.pickMode) { pickBaselineAt(e.offsetX, e.offsetY); return; }
         if (state.rateMode) pickRateAt(e.offsetX, e.offsetY);
       });
-      // 双击「缩放还原」按钮：ECharts 自定义 feature 只吃单击，
-      // 这里监听 #chart 容器的 dblclick，判断双击点落在 toolbox 区（图表顶部一条）就还原。
-      var chartHost = $('chart');
-      if (chartHost) {
-        chartHost.addEventListener('dblclick', function (e) {
-          var rect = chartHost.getBoundingClientRect();
-          var y = e.clientY - rect.top;
-          // toolbox 顶部一条（itemSize 16 + 顶部留白），约前 34px 是按钮区
-          if (y < 34) {
-            e.preventDefault();
-            restoreChartZoom();
-          }
-        });
-      }
     }
     $('file').addEventListener('change', function (e) {
       if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
