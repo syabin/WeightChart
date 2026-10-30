@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-10-30c';
+  var APP_VERSION = '2026-10-30d';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -92,6 +92,32 @@
     if (!(step > 0)) return 2;
     var d = -Math.floor(Math.log10(step));
     return Math.max(0, Math.min(6, d));
+  }
+
+  // 大时间缺口断线：相邻两点间隔超过「中位采样间隔 × 60（至少 1 分钟）」时，
+  // 在两点之间插入一个空值点。ECharts 默认 connectNulls:false，折线在此断开，
+  // 不会再把相隔几十分钟/几小时的两个点连成一条误导性的长直线。
+  function gapThreshold(data) {
+    var gaps = [];
+    for (var i = 1; i < data.length; i++) {
+      var d = data[i][0] - data[i - 1][0];
+      if (d > 0) gaps.push(d);
+    }
+    if (!gaps.length) return Infinity;
+    gaps.sort(function (a, b) { return a - b; });
+    var median = gaps[Math.floor(gaps.length / 2)];
+    return Math.max(median * 60, 60000);   // 至少 1 分钟
+  }
+  function splitByGaps(data, threshold) {
+    if (!isFinite(threshold) || data.length < 2) return data;
+    var out = [];
+    for (var i = 0; i < data.length; i++) {
+      out.push(data[i]);
+      if (i < data.length - 1 && data[i + 1][0] - data[i][0] > threshold) {
+        out.push([data[i + 1][0], null]);   // 空值点 → 折线断开
+      }
+    }
+    return out;
   }
 
   // 解析基准重量：按基准时间在 parsed 里取最近数据点的重量（基准重量 = 基准时间的重量）
@@ -572,6 +598,11 @@
     }
     state.auxData = auxData;
 
+    // 大时间缺口处断开折线：缺口两侧不再连成一条长直线（统计/预览仍用全量 parsed，不受影响）
+    var gapThr = gapThreshold(state.displayData);
+    var seriesData = splitByGaps(state.displayData, gapThr);
+    var auxSeriesData = auxActive ? splitByGaps(auxData, gapThr) : auxData;
+
     // 默认上下界（无余量，仅按数据本身）：直接取 displayData 的真实 min/max
     function rawMinMax(arr) {
       var min = Infinity, max = -Infinity;
@@ -624,8 +655,9 @@
       // ≤10 万点一次性绘制全部；超过 10 万点才分批动态渲染（仍是全部数据，不抽样）。
       progressive: 4000,
       progressiveThreshold: 100000,
+      connectNulls: false,   // 缺口空值点处断开，不跨缺口连线
       animation: false,
-      data: data,
+      data: seriesData,
       lineStyle: { width: 1.4, color: '#2f6fed' },
       itemStyle: { color: '#2f6fed' },
       areaStyle: { color: 'rgba(47,111,237,0.05)' }
@@ -644,9 +676,10 @@
         // 与重量线一致：不用 large 自适应取点，超 10 万点才分批动态渲染全部数据
         progressive: 4000,
         progressiveThreshold: 100000,
+        connectNulls: false,
         animation: false,
         z: 2,                 // 放在重量线（z:3）下层，避免遮挡
-        data: auxData,
+        data: auxSeriesData,
         lineStyle: { width: 1.4, color: 'rgba(255,122,26,0.5)' },
         itemStyle: { color: 'rgba(255,122,26,0.5)' }
       };
@@ -734,7 +767,11 @@
         },
         formatter: function (params) {
           if (!params || !params.length) return '';
+          // 缺口处插入了空值点：优先取有值的那一项来显示时间，避免显示到断点空值
           var p = params[0];
+          for (var pi = 0; pi < params.length; pi++) {
+            if (params[pi].value && params[pi].value[1] != null && !isNaN(params[pi].value[1])) { p = params[pi]; break; }
+          }
           var time = formatTime(new Date(p.value[0]));
           // 固定三行：时间 / 重量 / 辅助，无对应数据则该值显示 —
           var wVal = null, aVal = null;
