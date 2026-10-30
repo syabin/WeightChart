@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-10-26d';
+  var APP_VERSION = '2026-10-30a';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -71,14 +71,27 @@
 
   var chart = null;
 
-  // 把数值统一按整 10 圆整（最小值向下取 10 的倍数、最大值向上取 10 的倍数），用于坐标轴默认上下界
-  function roundUpToNice(v) {
-    if (v <= 0) return 0;
-    return Math.ceil(v / 10) * 10;
+  // 坐标轴默认上下界：按数据跨度自适应选「好看」的台阶（1/2/5 × 10^k），
+  // 再左右各留 2% 余量。关键：负值必须继续往下/往上取整，
+  // 不能像旧版那样 v<=0 一律返回 0，否则负值数据（如流量 -0.007）会被坐标轴整段裁掉。
+  function niceStep(span) {
+    if (!(span > 0) || !isFinite(span)) return 1;
+    var raw = span / 6;                       // 目标约 6 段刻度
+    var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    var n = raw / mag;
+    var mult = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+    return mult * mag;
   }
-  function roundDownToNice(v) {
-    if (v <= 0) return 0;
-    return Math.floor(v / 10) * 10;
+  function roundToStep(v, step, dir) {
+    if (!isFinite(v)) return v;
+    if (!(step > 0)) step = 1;
+    return (dir === 'up' ? Math.ceil(v / step) : Math.floor(v / step)) * step;
+  }
+  // 坐标轴标签小数位：由台阶大小决定（台阶 0.002 → 3 位；台阶 2 → 0 位）
+  function stepDecimals(step) {
+    if (!(step > 0)) return 2;
+    var d = -Math.floor(Math.log10(step));
+    return Math.max(0, Math.min(6, d));
   }
 
   // 解析基准重量：按基准时间在 parsed 里取最近数据点的重量（基准重量 = 基准时间的重量）
@@ -572,20 +585,33 @@
     }
     var wData = state.displayData;
     var wRaw = rawMinMax(wData);
-    // 默认值：min = 数据最小值向下圆整；max = 数据最大值 + 其 5% 预留后向上圆整到 1/5/10/50/100 台阶
-    var wMin, wMax;
+    // 默认值：按数据跨度自适应台阶；数据前后各留 2% 余量后向两侧取整。
+    // 这样负值/小量级数据也能完整落在轴上，不会被裁掉。
+    var wMin, wMax, wStep;
     if (wRaw) {
-      wMin = state.manualWMin != null ? state.manualWMin : roundDownToNice(wRaw.min);
-      var wDefMax = roundUpToNice(wRaw.max + Math.abs(wRaw.max) * 0.05);
+      var wSpan = wRaw.max - wRaw.min;
+      wStep = niceStep(wSpan);
+      var wPad = wSpan > 0 ? wSpan * 0.02 : Math.abs(wRaw.max || 1) * 0.05;
+      wMin = state.manualWMin != null ? state.manualWMin : roundToStep(wRaw.min - wPad, wStep, 'down');
+      var wDefMax = roundToStep(wRaw.max + wPad, wStep, 'up');
       wMax = state.manualWMax != null ? state.manualWMax : wDefMax;
-    } else { wMin = 0; wMax = 0; }
+    } else { wMin = 0; wMax = 0; wStep = 1; }
     // 辅助轴
-    var aMin, aMax;
+    var aMin, aMax, aStep;
     if (auxActive) {
       var aRaw = rawMinMax(auxData);
-      aMin = aRaw ? (state.manualAMin != null ? state.manualAMin : roundDownToNice(aRaw.min)) : 0;
-      aMax = aRaw ? (state.manualAMax != null ? state.manualAMax : roundUpToNice(aRaw.max)) : 0;
+      if (aRaw) {
+        var aSpan = aRaw.max - aRaw.min;
+        aStep = niceStep(aSpan);
+        var aPad = aSpan > 0 ? aSpan * 0.02 : Math.abs(aRaw.max || 1) * 0.05;
+        aMin = state.manualAMin != null ? state.manualAMin : roundToStep(aRaw.min - aPad, aStep, 'down');
+        aMax = state.manualAMax != null ? state.manualAMax : roundToStep(aRaw.max + aPad, aStep, 'up');
+      } else { aMin = 0; aMax = 0; aStep = 1; }
     }
+
+    // 轴标签小数位随台阶自适应（小量级数据不再全显示 0.00；至少保留 2 位）
+    var wDec = Math.max(2, stepDecimals(wStep));
+    var aDec = Math.max(2, stepDecimals(aStep));
 
     var series = {
       name: '重量',
@@ -818,7 +844,7 @@
           min: wMin,
           max: wMax,
           nameTextStyle: { color: '#6b7686' },
-          axisLabel: { color: '#6b7686', formatter: function (v) { return v.toFixed(2); } },
+          axisLabel: { color: '#6b7686', formatter: function (v) { return v.toFixed(wDec); } },
           splitLine: { lineStyle: { color: '#eef1f6' } }
         },
         {
@@ -828,7 +854,7 @@
           max: aMax,
           position: 'right',
           nameTextStyle: { color: '#ff7a1a' },
-          axisLabel: { color: '#ff7a1a', formatter: function (v) { return v.toFixed(2); } },
+          axisLabel: { color: '#ff7a1a', formatter: function (v) { return v.toFixed(aDec); } },
           splitLine: { show: false }
         }
       ] : [
@@ -838,7 +864,7 @@
           min: wMin,
           max: wMax,
           nameTextStyle: { color: '#6b7686' },
-          axisLabel: { color: '#6b7686', formatter: function (v) { return v.toFixed(2); } },
+          axisLabel: { color: '#6b7686', formatter: function (v) { return v.toFixed(wDec); } },
           splitLine: { lineStyle: { color: '#eef1f6' } }
         }
       ],
