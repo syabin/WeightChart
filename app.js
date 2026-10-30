@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-10-30d';
+  var APP_VERSION = '2026-10-30e';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -342,28 +342,8 @@
     showFileName(file && file.name ? file.name : null);
     var reader = new FileReader();
     reader.onload = function (e) {
-      try {
-        var wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
-        state.workbook = wb;
-        var names = wb.SheetNames;
-        if (names.length > 1) {
-          var sel = $('sheet');
-          sel.innerHTML = '';
-          names.forEach(function (n) {
-            var o = document.createElement('option');
-            o.value = n; o.textContent = n;
-            sel.appendChild(o);
-          });
-          $('sheetField').style.display = '';
-        } else {
-          $('sheetField').style.display = 'none';
-        }
-        loadSheet(names[0]);
-        logDrag('✓ 解析完成：' + (file && file.name ? file.name : ''));
-      } catch (err) {
-        logDrag('✗ 解析失败：' + err.message, true);
-        alert('读取文件失败：' + err.message);
-      }
+      cachePut(file);   // 存入最近文件缓存（IndexedDB，最多 10 个）
+      parseWorkbook(e.target.result, file && file.name ? file.name : '');
     };
     reader.onerror = function () {
       logDrag('✗ 文件读取失败（FileReader error）', true);
@@ -375,6 +355,143 @@
       logDrag('✗ readAsArrayBuffer 异常：' + err.message, true);
       alert('文件读取失败：' + err.message);
     }
+  }
+
+  // 从缓存加载：blob → ArrayBuffer → 走同一套解析流程，无需重新选择文件
+  function loadFromCache(rec) {
+    if (!rec || !rec.blob) return;
+    showFileName(rec.name);
+    try {
+      rec.blob.arrayBuffer().then(function (buf) {
+        parseWorkbook(buf, rec.name);
+      }).catch(function (err) {
+        alert('读取缓存文件失败：' + err.message);
+      });
+    } catch (e) {
+      alert('读取缓存文件失败：' + e.message);
+    }
+  }
+
+  function parseWorkbook(buf, name) {
+    try {
+      var wb = XLSX.read(buf, { type: 'array', cellDates: true });
+      state.workbook = wb;
+      var names = wb.SheetNames;
+      if (names.length > 1) {
+        var sel = $('sheet');
+        sel.innerHTML = '';
+        names.forEach(function (n) {
+          var o = document.createElement('option');
+          o.value = n; o.textContent = n;
+          sel.appendChild(o);
+        });
+        $('sheetField').style.display = '';
+      } else {
+        $('sheetField').style.display = 'none';
+      }
+      loadSheet(names[0]);
+      logDrag('✓ 解析完成：' + name);
+    } catch (err) {
+      logDrag('✗ 解析失败：' + err.message, true);
+      alert('读取文件失败：' + err.message);
+    }
+  }
+
+  // ---------- 最近文件缓存（IndexedDB，最多 10 个，存原始文件字节） ----------
+  var RECENT_MAX = 10;
+  var recentDb = null;
+  var recentMem = [];   // IndexedDB 不可用时的会话内兜底
+
+  function recentOpen(cb) {
+    if (recentDb) return cb(recentDb);
+    try {
+      if (!window.indexedDB) return cb(null);
+      var done = false;
+      var finish = function (db) { if (!done) { done = true; cb(db); } };
+      var req = indexedDB.open('weightchart-cache', 1);
+      req.onupgradeneeded = function (e) {
+        var db = e.target.result;
+        if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'id' });
+      };
+      req.onsuccess = function (e) { recentDb = e.target.result; finish(recentDb); };
+      req.onerror = function () { finish(null); };
+      req.onblocked = function () { finish(null); };
+      // file:// 等环境下 IndexedDB 可能既不 success 也不 error：超时退回内存兜底
+      setTimeout(function () { finish(recentDb || null); }, 1200);
+    } catch (e) { cb(null); }
+  }
+
+  function cachePut(file) {
+    if (!file || !file.name) return;
+    var rec = {
+      id: file.name + '|' + file.size + '|' + (file.lastModified || 0),
+      name: file.name, size: file.size || 0, lastModified: file.lastModified || 0,
+      time: Date.now(), blob: file
+    };
+    recentOpen(function (db) {
+      if (!db) {
+        recentMem = recentMem.filter(function (r) { return r.id !== rec.id; });
+        recentMem.unshift(rec);
+        recentMem = recentMem.slice(0, RECENT_MAX);
+        return;
+      }
+      try {
+        var tx = db.transaction('files', 'readwrite');
+        var st = tx.objectStore('files');
+        st.put(rec);
+        var gq = st.getAll();
+        gq.onsuccess = function () {
+          var all = (gq.result || []).sort(function (a, b) { return b.time - a.time; });
+          for (var i = RECENT_MAX; i < all.length; i++) st.delete(all[i].id);   // 只留最近 10 个
+        };
+      } catch (e) { }
+    });
+  }
+
+  function recentList(cb) {
+    recentOpen(function (db) {
+      if (!db) { cb(recentMem.slice()); return; }
+      try {
+        var gq = db.transaction('files').objectStore('files').getAll();
+        gq.onsuccess = function () {
+          cb((gq.result || []).sort(function (a, b) { return b.time - a.time; }).slice(0, RECENT_MAX));
+        };
+        gq.onerror = function () { cb([]); };
+      } catch (e) { cb([]); }
+    });
+  }
+
+  function renderRecentMenu() {
+    var menu = $('recentMenu');
+    if (!menu) return;
+    recentList(function (list) {
+      if (!list.length) {
+        menu.innerHTML = '<div class="recent-empty">暂无最近文件</div>';
+        return;
+      }
+      menu.innerHTML = list.map(function (r, idx) {
+        var kb = r.size >= 1048576 ? (r.size / 1048576).toFixed(1) + ' MB'
+               : Math.max(1, Math.round((r.size || 0) / 1024)) + ' KB';
+        var d = new Date(r.time || 0);
+        var when = r.lastModified ? new Date(r.lastModified).toLocaleDateString('zh-CN') + ' · ' : '';
+        var cached = isNaN(d.getTime()) ? '' : pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        return '<div class="recent-item" data-idx="' + idx + '" title="' + r.name.replace(/"/g, '&quot;') + '">'
+          + '<div class="n">' + r.name + '</div>'
+          + '<div class="m">' + kb + ' · ' + when + '缓存于 ' + cached + '</div></div>';
+      }).join('');
+      var items = menu.querySelectorAll('.recent-item');
+      for (var i = 0; i < items.length; i++) {
+        (function (el) {
+          el.addEventListener('click', function () {
+            menu.style.display = 'none';
+            recentList(function (list2) {
+              var rec = list2[+el.getAttribute('data-idx')];
+              if (rec) loadFromCache(rec);
+            });
+          });
+        })(items[i]);
+      }
+    });
   }
 
   function loadSheet(name) {
@@ -1173,6 +1290,21 @@
     }
     $('file').addEventListener('change', function (e) {
       if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
+    });
+    // 「当前文件」旁的下拉箭头：展开最近 10 个文件（本地缓存，点选直接加载）
+    var recentBtn = $('recentBtn');
+    if (recentBtn) {
+      recentBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var menu = $('recentMenu');
+        if (!menu) return;
+        if (menu.style.display === 'none') { renderRecentMenu(); menu.style.display = ''; }
+        else menu.style.display = 'none';
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var menu = $('recentMenu'), wrap = $('recentWrap');
+      if (menu && wrap && menu.style.display !== 'none' && !wrap.contains(e.target)) menu.style.display = 'none';
     });
     $('sheet').addEventListener('change', function (e) { loadSheet(e.target.value); });
     $('hasHeader').addEventListener('change', function (e) {
