@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-10-30a';
+  var APP_VERSION = '2026-10-30b';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -620,8 +620,10 @@
       showSymbol: false,
       smooth: false,
       step: state.stepLine ? 'end' : false,
-      large: true,
-      largeThreshold: 2000,
+      // 取消 large 自适应取点：不再按阈值切换绘制模式，始终画全部数据点。
+      // 只有点数超过上限（progressiveThreshold）时才分批动态渲染（仍是全部数据，不抽样）。
+      progressive: 4000,
+      progressiveThreshold: 10000,
       animation: false,
       data: data,
       lineStyle: { width: 1.4, color: '#2f6fed' },
@@ -639,8 +641,9 @@
         showSymbol: false,
         smooth: false,
         step: state.stepLine ? 'end' : false,
-        large: true,          // 与重量线一致，大数据量开启优化模式，避免超大文件渲染/交互时爆栈
-        largeThreshold: 2000,
+        // 与重量线一致：不用 large 自适应取点，超上限才分批动态渲染全部数据
+        progressive: 4000,
+        progressiveThreshold: 10000,
         animation: false,
         z: 2,                 // 放在重量线（z:3）下层，避免遮挡
         data: auxData,
