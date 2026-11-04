@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-11-04d';
+  var APP_VERSION = '2026-11-04e';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -73,7 +73,8 @@
     rawCount: 0,         // 抽稀前原始点数
     showCount: 0,        // 抽稀后实际显示点数（=rawCount 表示未抽稀）
     rawParsed: null,     // 抽稀前全量数据（引用）；缩放后视图内重抽稀按它计算
-    viewRawCount: 0      // 当前显示数据对应的原始点数（全量=rawCount；视图重建后=视图内原始点数）
+    viewRawCount: 0,     // 当前显示数据对应的原始点数（全量=rawCount；视图重建后=视图内原始点数）
+    outlineData: []      // 全时间精简轮廓 [[ms,w],...]：仅供底部缩略条（slider）显示总数据形状
   };
 
   var chart = null;
@@ -509,20 +510,30 @@
     state.parsed = out;
   }
 
-  // 动态抽稀：超过 MAX_POINTS 时按时间比例均匀取样（保留取样点真实数值），覆盖全时间范围
-  function decimate(parsed) {
+  // 动态抽稀：超过 maxN 时按时间比例均匀取样（保留取样点真实数值），覆盖全范围
+  function decimateTo(parsed, maxN) {
     var n = parsed.length;
-    if (n <= MAX_POINTS) return parsed;
-    var step = (n - 1) / (MAX_POINTS - 1);
-    var out = new Array(MAX_POINTS);
+    if (n <= maxN) return parsed;
+    var step = (n - 1) / (maxN - 1);
+    var out = new Array(maxN);
     var lastIdx = -1;
-    for (var i = 0; i < MAX_POINTS; i++) {
+    for (var i = 0; i < maxN; i++) {
       var idx = Math.round(i * step);
       if (idx <= lastIdx) idx = lastIdx + 1;
       if (idx > n - 1) idx = n - 1;
       out[i] = parsed[idx];
       lastIdx = idx;
     }
+    return out;
+  }
+  function decimate(parsed) { return decimateTo(parsed, MAX_POINTS); }
+
+  // 全时间精简轮廓（约 2000 点）：底部缩略条（dataZoom slider）的形状来源，
+  // 不随视图重抽稀变化——缩放后 slider 仍显示总数据的轮廓
+  function buildOutline(parsed) {
+    var d = decimateTo(parsed, 2000);
+    var out = new Array(d.length);
+    for (var i = 0; i < d.length; i++) out[i] = [d[i].t.getTime(), d[i].w];
     return out;
   }
 
@@ -943,7 +954,24 @@
       areaStyle: { color: 'rgba(47,111,237,0.05)' }
     };
 
-    var seriesArr = [series];
+    var seriesArr = [];
+    // 全时间总轮廓：透明、不交互，仅供底部缩略条显示总数据形状（不随视图重抽稀变化）
+    if (state.outlineData && state.outlineData.length) {
+      seriesArr.push({
+        name: '轮廓',
+        type: 'line',
+        yAxisIndex: 0,
+        showSymbol: false,
+        smooth: false,
+        silent: true,
+        z: 0,
+        animation: false,
+        lineStyle: { opacity: 0 },
+        emphasis: { disabled: true },
+        data: state.outlineData
+      });
+    }
+    seriesArr.push(series);
     var auxSeries = null;
     if (auxActive) {
       auxSeries = {
@@ -1047,16 +1075,19 @@
         },
         formatter: function (params) {
           if (!params || !params.length) return '';
-          // 缺口处插入了空值点：优先取有值的那一项来显示时间，避免显示到断点空值
-          var p = params[0];
+          // 跳过「轮廓」辅助 series 与缺口空值点：优先取有值的那一项来显示时间
+          var p = null;
           for (var pi = 0; pi < params.length; pi++) {
+            if (params[pi].seriesName === '轮廓') continue;
             if (params[pi].value && params[pi].value[1] != null && !isNaN(params[pi].value[1])) { p = params[pi]; break; }
           }
+          if (!p) return '';
           var time = formatTime(new Date(p.value[0]));
           // 固定三行：时间 / 重量 / 辅助，无对应数据则该值显示 —
           var wVal = null, aVal = null;
           for (var i = 0; i < params.length; i++) {
             var pp = params[i];
+            if (pp.seriesName === '轮廓') continue;
             var v = pp.value && pp.value[1];
             if (v == null || isNaN(v)) continue;
             if (pp.seriesName === '辅助') aVal = (+v).toFixed(3);
@@ -1468,6 +1499,7 @@
     // 保留全量（decimate 返回新数组，不改动原数组）；勾选「原始精度」时 decimate 直通不抽稀
     state.rawParsed = state.parsed;
     state.rawCount = state.parsed.length;
+    state.outlineData = buildOutline(state.rawParsed);   // 缩略条总轮廓只在数据变化时构建一次
     // 统一走视图重抽稀：无缩放=全时间（keepZoom 时保留当前视图时间范围）
     var r = keepZoom ? getCurrentRange() : null;
     rebuildDisplay(r);
