@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-11-04e';
+  var APP_VERSION = '2026-10-30e';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -66,15 +66,7 @@
     stableRanges: [],    // [[startMs,endMs], ...]
     events: [],          // [{type,t,from,to,mag}] 聚合后的事件段
     stats: null,
-    colCount: 0,
-    source: 'xlsx',      // 'xlsx' | 'csv'：解析来源；CSV 走轻量文本解析以避开 XLSX 巨型对象 OOM
-    header: null,        // 表头行（Array）或 null；列下拉标签与自动选列共用，替代 rows[0]
-    csvLines: null,      // CSV 原始行数组（字符串）；改列时重解析用，XLSX 路径恒为 null
-    rawCount: 0,         // 抽稀前原始点数
-    showCount: 0,        // 抽稀后实际显示点数（=rawCount 表示未抽稀）
-    rawParsed: null,     // 抽稀前全量数据（引用）；缩放后视图内重抽稀按它计算
-    viewRawCount: 0,     // 当前显示数据对应的原始点数（全量=rawCount；视图重建后=视图内原始点数）
-    outlineData: []      // 全时间精简轮廓 [[ms,w],...]：仅供底部缩略条（slider）显示总数据形状
+    colCount: 0
   };
 
   var chart = null;
@@ -130,15 +122,14 @@
 
   // 解析基准重量：按基准时间在 parsed 里取最近数据点的重量（基准重量 = 基准时间的重量）
   function resolveBaseline() {
-    if (!state.showBaseLine || state.baselineTime == null) return null;
-    // 用全量数据二分定位：基准重量不随视图重抽稀/缩放变化
-    var arr = (state.rawParsed && state.rawParsed.length) ? state.rawParsed : state.parsed;
-    if (!arr.length) return null;
+    if (!state.showBaseLine || state.baselineTime == null || !state.parsed.length) return null;
     var target = state.baselineTime.getTime();
-    var idx = nearestIdxIn(arr, target);
-    if (idx < 0) return null;
-    if (idx > 0 && Math.abs(arr[idx - 1].t.getTime() - target) <= Math.abs(arr[idx].t.getTime() - target)) idx--;
-    return arr[idx].w;
+    var best = null, bestD = Infinity;
+    for (var i = 0; i < state.parsed.length; i++) {
+      var d = Math.abs(state.parsed[i].t.getTime() - target);
+      if (d < bestD) { bestD = d; best = state.parsed[i].w; }
+    }
+    return best;
   }
 
   // 退出点选模式（恢复默认光标）
@@ -197,9 +188,12 @@
     var v = chart.convertFromPixel({ gridIndex: 0 }, [px, py]);
     if (!v || !isFinite(+v[0])) return;
     var tms = +v[0];
-    var idx = nearestIndexByTime(tms);
-    if (idx < 0) return;
-    var best = state.parsed[idx];
+    var best = null, bestD = Infinity;
+    for (var i = 0; i < state.parsed.length; i++) {
+      var d = Math.abs(state.parsed[i].t.getTime() - tms);
+      if (d < bestD) { bestD = d; best = state.parsed[i]; }
+    }
+    if (!best) return;
     if (!state.ratePick1) {
       state.ratePick1 = best;
       showRateMark(best);
@@ -254,9 +248,12 @@
     var v = chart.convertFromPixel({ gridIndex: 0 }, [px, py]);
     if (!v || !isFinite(+v[0])) return;
     var tms = +v[0];
-    var idx = nearestIndexByTime(tms);
-    if (idx < 0) return;
-    var best = state.parsed[idx];
+    var best = null, bestD = Infinity;
+    for (var i = 0; i < state.parsed.length; i++) {
+      var d = Math.abs(state.parsed[i].t.getTime() - tms);
+      if (d < bestD) { bestD = d; best = state.parsed[i]; }
+    }
+    if (!best) return;
     state.baselineTime = best.t;
     state.showBaseLine = true;
     disablePick();
@@ -320,8 +317,8 @@
   }
 
   function colLabel(c) {
-    if (state.hasHeader && state.header && state.header[c] != null && String(state.header[c]).trim() !== '') {
-      return colLetter(c) + ' · ' + String(state.header[c]).trim();
+    if (state.hasHeader && state.rows[0] && state.rows[0][c] != null && String(state.rows[0][c]).trim() !== '') {
+      return colLetter(c) + ' · ' + String(state.rows[0][c]).trim();
     }
     return colLetter(c);
   }
@@ -376,8 +373,6 @@
   }
 
   function parseWorkbook(buf, name) {
-    // CSV（含巨文件）：不走 XLSX.read（会把 115MB 全解析成巨型 worksheet 对象导致 OOM），改用轻量文本解析
-    if (isCsvFile(name, buf)) { parseCsv(buf, name); return; }
     try {
       var wb = XLSX.read(buf, { type: 'array', cellDates: true });
       state.workbook = wb;
@@ -400,160 +395,6 @@
       logDrag('✗ 解析失败：' + err.message, true);
       alert('读取文件失败：' + err.message);
     }
-  }
-
-  // ---------- 超大文件处理：CSV 轻量解析 + 动态抽稀 ----------
-  var MAX_POINTS = 100000;   // 最大显示点数：超过则按比例均匀取样（保留真实数值），避免海量点卡顿/崩溃
-  var STATS_RAW_MAX = 500000; // 视图内原始点数 ≤ 此值时，统计面板直接用原始数据计算（含抽稀漏掉的极值/事件）
-
-  function isCsvFile(name, buf) {
-    if (name && /\.csv$/i.test(name)) return true;
-    // XLSX/XLS 是 ZIP（PK\x03\x04）；其余（含纯文本 CSV）按 CSV 解析
-    if (buf && buf.byteLength >= 2 && buf[0] === 0x50 && buf[1] === 0x4B) return false;
-    return true;
-  }
-
-  // 简单 CSV 行解析：处理双引号转义（"" 表示字面引号，引号内逗号保留）
-  function splitCsvLine(line) {
-    var out = [], cur = '', inQ = false;
-    for (var i = 0; i < line.length; i++) {
-      var ch = line[i];
-      if (inQ) {
-        if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
-        else cur += ch;
-      } else {
-        if (ch === '"') inQ = true;
-        else if (ch === ',') { out.push(cur); cur = ''; }
-        else cur += ch;
-      }
-    }
-    out.push(cur);
-    return out;
-  }
-
-  function guessCsvColumns(header) {
-    var timeCol = -1, weightCol = -1, auxCol = -1;
-    for (var c = 0; c < header.length; c++) {
-      var h = String(header[c] || '').toLowerCase();
-      if (timeCol < 0 && /时间|time/.test(h)) timeCol = c;
-      if (weightCol < 0 && /重量|weight|重/.test(h)) weightCol = c;
-    }
-    if (timeCol < 0) timeCol = 0;
-    if (weightCol < 0) weightCol = Math.min(1, header.length - 1);
-    for (var c2 = 0; c2 < header.length; c2++) {
-      if (c2 !== timeCol && c2 !== weightCol) { auxCol = c2; break; }
-    }
-    return { timeCol: timeCol, weightCol: weightCol, auxCol: auxCol };
-  }
-
-  function parseCsv(buf, name) {
-    try {
-      var text = new TextDecoder('utf-8').decode(new Uint8Array(buf));
-      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);   // 去 BOM
-      var lines = text.split(/\r?\n/);
-      text = null;   // 释放原始字符串，仅保留行数组
-      while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
-      if (!lines.length) { alert('文件为空'); return; }
-      var header = splitCsvLine(lines[0]);
-      var cc = header.length;
-      var scan = Math.min(lines.length, 1000);
-      for (var i = 1; i < scan; i++) { var cnt = splitCsvLine(lines[i]).length; if (cnt > cc) cc = cnt; }
-      state.colCount = cc;
-      var t0 = parseTime(header[0]);
-      var w0 = parseWeight(header[1]);
-      var guessHeader = (t0 == null && isNaN(w0));
-      state.hasHeader = guessHeader;
-      state.header = guessHeader ? header : null;
-      state.csvLines = lines;
-      state.source = 'csv';
-      state.workbook = null;
-      var g = guessCsvColumns(header);
-      state.timeCol = g.timeCol;
-      state.weightCol = g.weightCol;
-      state.auxCol = g.auxCol;
-      state.showBaseLine = false;
-      state.baselineTime = null;
-      disablePick();
-      $('hasHeader').checked = guessHeader;
-      buildColumnSelectors();
-      $('timeCol').value = String(state.timeCol);
-      $('weightCol').value = String(state.weightCol);
-      $('auxCol').value = String(state.auxCol);
-      // 大数据量保护：CSV 轻解析后内存可控，仍提示确认避免误拖巨文件
-      if (lines.length > 500000 && !window.confirm('当前文件约 ' + lines.length.toLocaleString() + ' 行，将动态抽稀到最多 ' + MAX_POINTS.toLocaleString() + ' 点后加载，可能需要数秒。仍要继续吗？')) {
-        return;
-      }
-      updateAll();
-    } catch (err) {
-      logDrag('✗ CSV 解析失败：' + err.message, true);
-      alert('读取文件失败：' + err.message);
-    }
-  }
-
-  // 从 CSV 行数组解析数据（仅取所选 3 列），构建 state.parsed。改列时重复调用。
-  function loadCsvData() {
-    var lines = state.csvLines;
-    if (!lines) return;
-    var tCol = state.timeCol, wCol = state.weightCol, aCol = state.auxCol;
-    var start = state.hasHeader ? 1 : 0;
-    var out = [];
-    for (var i = start; i < lines.length; i++) {
-      var p = splitCsvLine(lines[i]);
-      if (!p.length) continue;
-      var t = parseTime(p[tCol]);
-      var w = parseWeight(p[wCol]);
-      if (t == null || isNaN(w)) continue;
-      var a = (aCol >= 0) ? parseWeight(p[aCol]) : null;
-      out.push({ t: t, w: w, a: (aCol >= 0 && !isNaN(a)) ? a : null });
-    }
-    out.sort(function (a, b) { return a.t.getTime() - b.t.getTime(); });
-    state.parsed = out;
-  }
-
-  // 动态抽稀：超过 maxN 时按时间比例均匀取样（保留取样点真实数值），覆盖全范围
-  function decimateTo(parsed, maxN) {
-    var n = parsed.length;
-    if (n <= maxN) return parsed;
-    var step = (n - 1) / (maxN - 1);
-    var out = new Array(maxN);
-    var lastIdx = -1;
-    for (var i = 0; i < maxN; i++) {
-      var idx = Math.round(i * step);
-      if (idx <= lastIdx) idx = lastIdx + 1;
-      if (idx > n - 1) idx = n - 1;
-      out[i] = parsed[idx];
-      lastIdx = idx;
-    }
-    return out;
-  }
-  function decimate(parsed) { return decimateTo(parsed, MAX_POINTS); }
-
-  // 全时间精简轮廓（约 2000 点）：底部缩略条（dataZoom slider）的形状来源，
-  // 不随视图重抽稀变化——缩放后 slider 仍显示总数据的轮廓
-  function buildOutline(parsed) {
-    var d = decimateTo(parsed, 2000);
-    var out = new Array(d.length);
-    for (var i = 0; i < d.length; i++) out[i] = [d[i].t.getTime(), d[i].w];
-    return out;
-  }
-
-  // 二分：数组内第一个时间 ≥ tms 的索引（-1 = 空数组）
-  function nearestIdxIn(arr, tms) {
-    if (!arr || !arr.length) return -1;
-    var lo = 0, hi = arr.length - 1;
-    while (lo < hi) {
-      var mid = (lo + hi) >> 1;
-      if (arr[mid].t.getTime() < tms) lo = mid + 1; else hi = mid;
-    }
-    return lo;
-  }
-  // 视图/取点用：时间上离 tms 最近的点索引
-  function nearestIndexByTime(tms) {
-    var a = state.parsed;
-    var idx = nearestIdxIn(a, tms);
-    if (idx < 0) return -1;
-    if (idx > 0 && Math.abs(a[idx - 1].t.getTime() - tms) <= Math.abs(a[idx].t.getTime() - tms)) idx--;
-    return idx;
   }
 
   // ---------- 最近文件缓存（IndexedDB，最多 10 个，存原始文件字节） ----------
@@ -669,9 +510,6 @@
     var cc = 0;
     rows.forEach(function (r) { if (r && r.length > cc) cc = r.length; });
     state.colCount = cc;
-    state.source = 'xlsx';
-    state.csvLines = null;
-    state.header = state.hasHeader ? (rows[0] || null) : null;
 
     if (rows.length) {
       var t0 = parseTime(rows[0][0]);
@@ -703,7 +541,7 @@
     noOpt.value = '-1'; noOpt.textContent = '无';
     ac.appendChild(noOpt);
     // 有表头时把列标题名带上（列字母·标题名），无表头退回纯列字母
-    var header = (state.hasHeader && state.header) ? state.header : null;
+    var header = (state.hasHeader && state.rows.length) ? state.rows[0] : null;
     for (var c = 0; c < state.colCount; c++) {
       // colLabel(c) 已按「有表头→列字母·表头名 / 无表头→纯列字母」返回，勿再重复拼表头名
       var label = colLabel(c);
@@ -733,8 +571,6 @@
   }
 
   // 窗口波动(range-window)检测 + 事件段聚合
-  // 注意：必须用单调队列维护窗口 min/max，整体 O(n)。
-  // 旧版在内层 for k=j..i 求窗口极值，连续稳定段会变成 O(n²)，百万行直接卡死。
   function analyzeData(data) {
     var T = state.windowSec * 1000;
     var D = state.deltaKg;
@@ -770,27 +606,17 @@
       run = null;
     }
 
-    // 单调队列维护时间窗口 [j..i]（跨度 ≤ T）的 min/max，O(1) 均摊
-    var dqMin = [], dqMax = [];
     var j = 0;
-
     for (var i = 0; i < n; i++) {
       var ti = data[i].t.getTime();
       var wi = data[i].w;
-      // 左边界 j：保证窗口时间跨度 ≤ T
-      while (j < i && ti - data[j].t.getTime() > T) {
-        if (dqMin.length && dqMin[0] === j) dqMin.shift();
-        if (dqMax.length && dqMax[0] === j) dqMax.shift();
-        j++;
-      }
-      // 入队当前点（单调队列）
-      while (dqMin.length && data[dqMin[dqMin.length - 1]].w >= wi) dqMin.pop();
-      dqMin.push(i);
-      while (dqMax.length && data[dqMax[dqMax.length - 1]].w <= wi) dqMax.pop();
-      dqMax.push(i);
+      while (ti - data[j].t.getTime() > T) j++;
 
-      var minW = data[dqMin[0]].w;
-      var maxW = data[dqMax[0]].w;
+      var minW = wi, maxW = wi;
+      for (var k = j; k <= i; k++) {
+        if (data[k].w < minW) minW = data[k].w;
+        if (data[k].w > maxW) maxW = data[k].w;
+      }
       var range = maxW - minW;
 
       if (range >= D) {
@@ -954,24 +780,7 @@
       areaStyle: { color: 'rgba(47,111,237,0.05)' }
     };
 
-    var seriesArr = [];
-    // 全时间总轮廓：透明、不交互，仅供底部缩略条显示总数据形状（不随视图重抽稀变化）
-    if (state.outlineData && state.outlineData.length) {
-      seriesArr.push({
-        name: '轮廓',
-        type: 'line',
-        yAxisIndex: 0,
-        showSymbol: false,
-        smooth: false,
-        silent: true,
-        z: 0,
-        animation: false,
-        lineStyle: { opacity: 0 },
-        emphasis: { disabled: true },
-        data: state.outlineData
-      });
-    }
-    seriesArr.push(series);
+    var seriesArr = [series];
     var auxSeries = null;
     if (auxActive) {
       auxSeries = {
@@ -1075,19 +884,16 @@
         },
         formatter: function (params) {
           if (!params || !params.length) return '';
-          // 跳过「轮廓」辅助 series 与缺口空值点：优先取有值的那一项来显示时间
-          var p = null;
+          // 缺口处插入了空值点：优先取有值的那一项来显示时间，避免显示到断点空值
+          var p = params[0];
           for (var pi = 0; pi < params.length; pi++) {
-            if (params[pi].seriesName === '轮廓') continue;
             if (params[pi].value && params[pi].value[1] != null && !isNaN(params[pi].value[1])) { p = params[pi]; break; }
           }
-          if (!p) return '';
           var time = formatTime(new Date(p.value[0]));
           // 固定三行：时间 / 重量 / 辅助，无对应数据则该值显示 —
           var wVal = null, aVal = null;
           for (var i = 0; i < params.length; i++) {
             var pp = params[i];
-            if (pp.seriesName === '轮廓') continue;
             var v = pp.value && pp.value[1];
             if (v == null || isNaN(v)) continue;
             if (pp.seriesName === '辅助') aVal = (+v).toFixed(3);
@@ -1311,27 +1117,14 @@
     var box = $('stats');
     var s;
     if (range && state.parsed.length) {
-      // 二分定位视图在原始数据中的起止索引
-      var rawAll = state.rawParsed || state.parsed;
-      var rs = nearestIdxIn(rawAll, range[0]);
-      var re = nearestIdxIn(rawAll, range[1]);
-      if (rs < 0) rs = 0;
-      if (re < 0) re = rawAll.length - 1;
-      var rawView = Math.max(0, re - rs + 1);
-      var srcData;
-      if (rawView <= STATS_RAW_MAX) {
-        // 视图内原始点数可控：直接用原始数据统计（含抽稀可能漏掉的极值/事件，放大后更准）
-        srcData = rawAll.slice(rs, re + 1);
-      } else {
-        // 视图过大：退回显示数据统计，保证缩放拖动流畅
-        var sIdx = nearestIndexByTime(range[0]);
-        var eIdx = nearestIndexByTime(range[1]);
-        if (sIdx < 0) sIdx = 0;
-        if (eIdx < 0) eIdx = state.parsed.length - 1;
-        srcData = state.parsed.slice(sIdx, eIdx + 1);
+      var viewData = [];
+      for (var i = 0; i < state.parsed.length; i++) {
+        var tms = state.parsed[i].t.getTime();
+        if (tms >= range[0] && tms <= range[1]) viewData.push(state.parsed[i]);
+        else if (tms > range[1]) break;
       }
-      var res = analyzeData(srcData);
-      s = calcStats(srcData, res.events);
+      var res = analyzeData(viewData);
+      s = calcStats(viewData, res.events);
     } else {
       s = state.stats;
     }
@@ -1345,8 +1138,8 @@
       var rr2 = calcRate(state.rateRange.t1, state.rateRange.t2);
       rateLabel = '变化速率（框选）';
       rateVal = rr2 ? rateValHtml(rr2, '#e0533d') : '—';
-    } else if (range && srcData.length > 1) {
-      var rf2 = srcData[0], rl2 = srcData[srcData.length - 1];
+    } else if (range && viewData.length > 1) {
+      var rf2 = viewData[0], rl2 = viewData[viewData.length - 1];
       var mins2 = (rl2.t.getTime() - rf2.t.getTime()) / 60000;
       rateLabel = '变化速率' + suffix;
       if (mins2 > 0) rateVal = rateValHtml({ rate: (rl2.w - rf2.w) / mins2 }, '#1f2733');
@@ -1365,18 +1158,6 @@
       stat(rateLabel, rateVal);
     if (s.points && s.count === 0) {
       html += '<div style="padding:10px 12px; margin-top:8px; background:#fff8e6; border:1px solid #ffe58f; border-radius:8px; color:#8a6d1b; font-size:12px;">当前阈值下未识别到上料/出料事件，所有点被判为平稳段（抖动&lt;阈值）。如需看到事件，请尝试<b>降低重量差阈值</b>或<b>缩小时间窗口</b>。</div>';
-    }
-    // 抽稀程度：当前显示数据 vs 它对应的原始点数（缩放停止后视图重抽稀，自动贴近上限）
-    var decRaw = state.viewRawCount || state.rawCount;
-    var decShow = state.parsed.length;
-    if (decRaw > decShow) {
-      var decRatio = decRaw / decShow;
-      html += '<div style="padding:10px 12px; margin-top:8px; background:#eef4ff; border:1px solid #cfe0ff; border-radius:8px; color:#2f6fed; font-size:12px;">'
-        + '动态抽稀：原始 <b>' + decRaw.toLocaleString() + '</b> 点 → 显示 <b>' + decShow.toLocaleString()
-        + '</b> 点（约每 ' + decRatio.toFixed(1) + ' 点取 1）</div>';
-    } else if (state.rawCount > state.showCount) {
-      html += '<div style="padding:10px 12px; margin-top:8px; background:#f0fbf4; border:1px solid #bfe8cd; border-radius:8px; color:#2f9e6f; font-size:12px;">'
-        + '视图内未抽稀：<b>' + decShow.toLocaleString() + '</b> 点原始数据全部显示</div>';
     }
     box.innerHTML = html;
   }
@@ -1404,44 +1185,7 @@
 
   // 还原到「初始缩放」：把 inside + slider 两个 dataZoom 都派回 0/100（全量时间轴），
   // 再同步刷新统计/预览（跟随放大开着时统计是跟当前视图走的，必须重算）。
-  // 视图重抽稀：按时间范围从全量数据重建显示数据。
-  // 范围内原始点数超过上限则按比例重抽稀到 ~上限（显示点数动态贴近 20 万），
-  // 不足上限则按实际数量全部显示。重建后坐标轴随新数据自适应、缩放归位。
-  var rebuilding = false;   // 重建期间屏蔽 datazoom 事件，防循环触发
-  var rebuildTimer = null;  // 缩放停止 200ms 后才重建，拖动过程不卡顿
-  function rebuildDisplay(range) {
-    if (!state.rawParsed || !state.rawParsed.length) return;
-    var src;
-    if (range) {
-      var rs = nearestIdxIn(state.rawParsed, range[0]);
-      var re = nearestIdxIn(state.rawParsed, range[1]);
-      if (rs < 0) rs = 0;
-      if (re < 0) re = state.rawParsed.length - 1;
-      src = state.rawParsed.slice(rs, re + 1);
-    } else {
-      src = state.rawParsed;
-    }
-    state.viewRawCount = src.length;
-    state.parsed = decimate(src);   // ≤上限时原样返回，按实际数量全显
-    state.showCount = state.parsed.length;
-    compute();
-    rebuilding = true;
-    try {
-      renderChart(false);   // 不保留旧缩放：轴随重建后的数据自适应
-      try {
-        chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 0, start: 0, end: 100 });
-        chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 1, start: 0, end: 100 });
-      } catch (e) { }
-    } finally {
-      rebuilding = false;
-    }
-    renderStats(null);
-    renderPreview(null);
-  }
-
-  // 一键缩放还原：回到全时间全量（从全量数据重建）
   function restoreChartZoom() {
-    if (chart && state.rawParsed && state.rawParsed.length) { rebuildDisplay(null); return; }
     if (!chart) return;
     chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 0, start: 0, end: 100 });
     chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 1, start: 0, end: 100 });
@@ -1455,19 +1199,17 @@
     var rows = state.parsed;
     if (!rows.length) { box.innerHTML = '<div class="empty" style="padding:24px;">无有效数据</div>'; return; }
 
-    var limit = 1000;
-    var viewData = [], viewIdx = [];
+    // 按当前视图范围筛选
+    var viewData = [];
+    var viewIdx = [];
     if (range) {
-      // 二分定位起点，仅取该范围内前 limit 行（不建全量数组），analyzeData 只处理 ≤limit 行
-      var sIdx = nearestIndexByTime(range[0]);
-      if (sIdx < 0) sIdx = 0;
-      for (var i = sIdx; i < rows.length; i++) {
+      for (var i = 0; i < rows.length; i++) {
         var tms = rows[i].t.getTime();
-        if (tms > range[1]) break;
-        if (viewData.length < limit) { viewData.push(rows[i]); viewIdx.push(i); }
+        if (tms >= range[0] && tms <= range[1]) { viewData.push(rows[i]); viewIdx.push(i); }
+        else if (tms > range[1]) break;
       }
     } else {
-      for (var j = 0; j < rows.length && j < limit; j++) { viewData.push(rows[j]); viewIdx.push(j); }
+      for (var j = 0; j < rows.length; j++) { viewData.push(rows[j]); viewIdx.push(j); }
     }
 
     if (!viewData.length) {
@@ -1475,11 +1217,12 @@
       return;
     }
 
-    // 在当前视图内重新计算事件/平稳标记，保证与统计面板一致（仅 ≤limit 行，安全）
+    // 在当前视图内重新计算事件/平稳标记，保证与统计面板一致
     var viewRes = analyzeData(viewData);
 
+    var limit = Math.min(viewData.length, 1000);
     var html = '<table><thead><tr><th class="l">#</th><th class="l">时间</th><th>重量(kg)</th><th class="l">标记</th></tr></thead><tbody>';
-    for (var k = 0; k < viewData.length; k++) {
+    for (var k = 0; k < limit; k++) {
       var idx = viewIdx[k];
       var role, cls;
       if (viewRes.isEvent[k]) { role = viewRes.eventType[k] === 'load' ? '上料' : '出料'; cls = viewRes.eventType[k]; }
@@ -1489,20 +1232,21 @@
         '</td><td>' + viewData[k].w.toFixed(3) + '</td><td class="l"><span class="pill ' + cls + '">' + role + '</span></td></tr>';
     }
     html += '</tbody></table>';
-    html += '<div class="hint" style="padding:6px 10px;">（显示当前区域前 ' + limit + ' 行，共 ' + rows.length + ' 行）</div>';
+    if (range) {
+      html += '<div class="hint" style="padding:6px 10px;">（显示当前放大区域前 ' + limit + ' 行，共 ' + viewData.length + ' 行）</div>';
+    } else {
+      html += '<div class="hint" style="padding:6px 10px;">（仅显示前 ' + limit + ' 行，共 ' + rows.length + ' 行）</div>';
+    }
     box.innerHTML = html;
   }
 
   function updateAll(keepZoom) {
-    if (state.source === 'csv') loadCsvData();
-    else parseData();
-    // 保留全量（decimate 返回新数组，不改动原数组）；勾选「原始精度」时 decimate 直通不抽稀
-    state.rawParsed = state.parsed;
-    state.rawCount = state.parsed.length;
-    state.outlineData = buildOutline(state.rawParsed);   // 缩略条总轮廓只在数据变化时构建一次
-    // 统一走视图重抽稀：无缩放=全时间（keepZoom 时保留当前视图时间范围）
-    var r = keepZoom ? getCurrentRange() : null;
-    rebuildDisplay(r);
+    parseData();
+    compute();
+    renderChart(keepZoom);
+    var range = state.followZoom ? getCurrentRange() : null;
+    renderStats(range);
+    renderPreview(range);
   }
 
   // ---------- 坐标轴手动 min/max ----------
@@ -1534,17 +1278,9 @@
     // 缩放/框选时实时刷新预览表为当前视图范围；手动坐标轴值不再被缩放重置
     if (chart) {
       chart.on('datazoom', function () {
-        if (rebuilding) return;
         var range = state.followZoom ? getCurrentRange() : null;
         renderStats(range);
         renderPreview(range);
-        // 停止缩放 200ms 后按视图重抽稀：显示点数动态贴近上限
-        if (rebuildTimer) clearTimeout(rebuildTimer);
-        rebuildTimer = setTimeout(function () {
-          rebuildTimer = null;
-          if (rebuilding) return;
-          rebuildDisplay(getCurrentRange());
-        }, 200);
       });
       // 点选基准：点选模式下在网格区内点击，取该处最近数据点时间为基准时间
       chart.getZr().on('click', function (e) {
@@ -1622,14 +1358,6 @@
     $('stepLine').addEventListener('change', function (e) {
       state.stepLine = e.target.checked;
       renderChart(true);
-    });
-    // 原始精度：跳过动态抽稀全量渲染（超大文件性能自担），用于对比测试
-    // 切换时不重新解析文件：直接从保留的全量数据重建显示数据
-    var rawModeEl = $('rawMode');
-    if (rawModeEl) rawModeEl.addEventListener('change', function () {
-      // 切换不重新解析：从保留的全量数据按当前视图重建（decimate 受勾选状态控制）
-      if (!state.rawParsed || !state.rawParsed.length) { updateAll(true); return; }
-      rebuildDisplay(getCurrentRange());
     });
     bindDropzone();
   }
