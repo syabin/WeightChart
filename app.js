@@ -1312,8 +1312,8 @@
       var rr2 = calcRate(state.rateRange.t1, state.rateRange.t2);
       rateLabel = '变化速率（框选）';
       rateVal = rr2 ? rateValHtml(rr2, '#e0533d') : '—';
-    } else if (range && viewData.length > 1) {
-      var rf2 = viewData[0], rl2 = viewData[viewData.length - 1];
+    } else if (range && srcData.length > 1) {
+      var rf2 = srcData[0], rl2 = srcData[srcData.length - 1];
       var mins2 = (rl2.t.getTime() - rf2.t.getTime()) / 60000;
       rateLabel = '变化速率' + suffix;
       if (mins2 > 0) rateVal = rateValHtml({ rate: (rl2.w - rf2.w) / mins2 }, '#1f2733');
