@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-11-04b';
+  var APP_VERSION = '2026-11-04d';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -72,7 +72,8 @@
     csvLines: null,      // CSV 原始行数组（字符串）；改列时重解析用，XLSX 路径恒为 null
     rawCount: 0,         // 抽稀前原始点数
     showCount: 0,        // 抽稀后实际显示点数（=rawCount 表示未抽稀）
-    rawParsed: null      // 抽稀前全量数据（引用）；缩放后视图内统计/抽稀程度按它计算
+    rawParsed: null,     // 抽稀前全量数据（引用）；缩放后视图内重抽稀按它计算
+    viewRawCount: 0      // 当前显示数据对应的原始点数（全量=rawCount；视图重建后=视图内原始点数）
   };
 
   var chart = null;
@@ -128,14 +129,15 @@
 
   // 解析基准重量：按基准时间在 parsed 里取最近数据点的重量（基准重量 = 基准时间的重量）
   function resolveBaseline() {
-    if (!state.showBaseLine || state.baselineTime == null || !state.parsed.length) return null;
+    if (!state.showBaseLine || state.baselineTime == null) return null;
+    // 用全量数据二分定位：基准重量不随视图重抽稀/缩放变化
+    var arr = (state.rawParsed && state.rawParsed.length) ? state.rawParsed : state.parsed;
+    if (!arr.length) return null;
     var target = state.baselineTime.getTime();
-    var best = null, bestD = Infinity;
-    for (var i = 0; i < state.parsed.length; i++) {
-      var d = Math.abs(state.parsed[i].t.getTime() - target);
-      if (d < bestD) { bestD = d; best = state.parsed[i].w; }
-    }
-    return best;
+    var idx = nearestIdxIn(arr, target);
+    if (idx < 0) return null;
+    if (idx > 0 && Math.abs(arr[idx - 1].t.getTime() - target) <= Math.abs(arr[idx].t.getTime() - target)) idx--;
+    return arr[idx].w;
   }
 
   // 退出点选模式（恢复默认光标）
@@ -400,7 +402,7 @@
   }
 
   // ---------- 超大文件处理：CSV 轻量解析 + 动态抽稀 ----------
-  var MAX_POINTS = 200000;   // 最大显示点数：超过则按比例均匀取样（保留真实数值），避免海量点卡顿/崩溃
+  var MAX_POINTS = 100000;   // 最大显示点数：超过则按比例均匀取样（保留真实数值），避免海量点卡顿/崩溃
   var STATS_RAW_MAX = 500000; // 视图内原始点数 ≤ 此值时，统计面板直接用原始数据计算（含抽稀漏掉的极值/事件）
 
   function isCsvFile(name, buf) {
@@ -1333,31 +1335,17 @@
     if (s.points && s.count === 0) {
       html += '<div style="padding:10px 12px; margin-top:8px; background:#fff8e6; border:1px solid #ffe58f; border-radius:8px; color:#8a6d1b; font-size:12px;">当前阈值下未识别到上料/出料事件，所有点被判为平稳段（抖动&lt;阈值）。如需看到事件，请尝试<b>降低重量差阈值</b>或<b>缩小时间窗口</b>。</div>';
     }
-    if (state.rawCount > state.showCount) {
-      var decRaw, decShow, decLabel;
-      if (range) {
-        // 缩放后：抽稀程度按当前视图内的原始/显示点数实时计算
-        decRaw = rawView;
-        var ss2 = nearestIdxIn(state.parsed, range[0]);
-        var se2 = nearestIdxIn(state.parsed, range[1]);
-        if (ss2 < 0) ss2 = 0;
-        if (se2 < 0) se2 = state.parsed.length - 1;
-        decShow = Math.max(0, se2 - ss2 + 1);
-        decLabel = '动态抽稀（视图内）';
-      } else {
-        decRaw = state.rawCount;
-        decShow = state.showCount;
-        decLabel = '动态抽稀';
-      }
-      if (decRaw > decShow) {
-        var decRatio = decRaw / decShow;
-        html += '<div style="padding:10px 12px; margin-top:8px; background:#eef4ff; border:1px solid #cfe0ff; border-radius:8px; color:#2f6fed; font-size:12px;">'
-          + decLabel + '：原始 <b>' + decRaw.toLocaleString() + '</b> 点 → 显示 <b>' + decShow.toLocaleString()
-          + '</b> 点（约每 ' + decRatio.toFixed(1) + ' 点取 1）</div>';
-      } else {
-        html += '<div style="padding:10px 12px; margin-top:8px; background:#f0fbf4; border:1px solid #bfe8cd; border-radius:8px; color:#2f9e6f; font-size:12px;">'
-          + '视图内未抽稀：<b>' + decRaw.toLocaleString() + '</b> 点原始数据全部显示</div>';
-      }
+    // 抽稀程度：当前显示数据 vs 它对应的原始点数（缩放停止后视图重抽稀，自动贴近上限）
+    var decRaw = state.viewRawCount || state.rawCount;
+    var decShow = state.parsed.length;
+    if (decRaw > decShow) {
+      var decRatio = decRaw / decShow;
+      html += '<div style="padding:10px 12px; margin-top:8px; background:#eef4ff; border:1px solid #cfe0ff; border-radius:8px; color:#2f6fed; font-size:12px;">'
+        + '动态抽稀：原始 <b>' + decRaw.toLocaleString() + '</b> 点 → 显示 <b>' + decShow.toLocaleString()
+        + '</b> 点（约每 ' + decRatio.toFixed(1) + ' 点取 1）</div>';
+    } else if (state.rawCount > state.showCount) {
+      html += '<div style="padding:10px 12px; margin-top:8px; background:#f0fbf4; border:1px solid #bfe8cd; border-radius:8px; color:#2f9e6f; font-size:12px;">'
+        + '视图内未抽稀：<b>' + decShow.toLocaleString() + '</b> 点原始数据全部显示</div>';
     }
     box.innerHTML = html;
   }
@@ -1385,7 +1373,44 @@
 
   // 还原到「初始缩放」：把 inside + slider 两个 dataZoom 都派回 0/100（全量时间轴），
   // 再同步刷新统计/预览（跟随放大开着时统计是跟当前视图走的，必须重算）。
+  // 视图重抽稀：按时间范围从全量数据重建显示数据。
+  // 范围内原始点数超过上限则按比例重抽稀到 ~上限（显示点数动态贴近 20 万），
+  // 不足上限则按实际数量全部显示。重建后坐标轴随新数据自适应、缩放归位。
+  var rebuilding = false;   // 重建期间屏蔽 datazoom 事件，防循环触发
+  var rebuildTimer = null;  // 缩放停止 200ms 后才重建，拖动过程不卡顿
+  function rebuildDisplay(range) {
+    if (!state.rawParsed || !state.rawParsed.length) return;
+    var src;
+    if (range) {
+      var rs = nearestIdxIn(state.rawParsed, range[0]);
+      var re = nearestIdxIn(state.rawParsed, range[1]);
+      if (rs < 0) rs = 0;
+      if (re < 0) re = state.rawParsed.length - 1;
+      src = state.rawParsed.slice(rs, re + 1);
+    } else {
+      src = state.rawParsed;
+    }
+    state.viewRawCount = src.length;
+    state.parsed = decimate(src);   // ≤上限时原样返回，按实际数量全显
+    state.showCount = state.parsed.length;
+    compute();
+    rebuilding = true;
+    try {
+      renderChart(false);   // 不保留旧缩放：轴随重建后的数据自适应
+      try {
+        chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 0, start: 0, end: 100 });
+        chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 1, start: 0, end: 100 });
+      } catch (e) { }
+    } finally {
+      rebuilding = false;
+    }
+    renderStats(null);
+    renderPreview(null);
+  }
+
+  // 一键缩放还原：回到全时间全量（从全量数据重建）
   function restoreChartZoom() {
+    if (chart && state.rawParsed && state.rawParsed.length) { rebuildDisplay(null); return; }
     if (!chart) return;
     chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 0, start: 0, end: 100 });
     chart.dispatchAction({ type: 'dataZoom', dataZoomIndex: 1, start: 0, end: 100 });
@@ -1440,23 +1465,12 @@
   function updateAll(keepZoom) {
     if (state.source === 'csv') loadCsvData();
     else parseData();
-    // 动态抽稀：超过上限按时间比例均匀取样，统计面板会显示抽稀程度（随缩放更新）
-    // 勾选「原始精度」则跳过抽稀，全量渲染（性能自担）
-    var rawN = state.parsed.length;
-    state.rawParsed = state.parsed;   // 保留全量（decimate 返回新数组，不改动原数组）
-    state.rawCount = rawN;
-    var rawEl = $('rawMode');
-    if (rawEl && rawEl.checked) {
-      state.showCount = rawN;         // 不抽稀：全量渲染
-    } else {
-      state.parsed = decimate(state.parsed);
-      state.showCount = state.parsed.length;
-    }
-    compute();
-    renderChart(keepZoom);
-    var range = state.followZoom ? getCurrentRange() : null;
-    renderStats(range);
-    renderPreview(range);
+    // 保留全量（decimate 返回新数组，不改动原数组）；勾选「原始精度」时 decimate 直通不抽稀
+    state.rawParsed = state.parsed;
+    state.rawCount = state.parsed.length;
+    // 统一走视图重抽稀：无缩放=全时间（keepZoom 时保留当前视图时间范围）
+    var r = keepZoom ? getCurrentRange() : null;
+    rebuildDisplay(r);
   }
 
   // ---------- 坐标轴手动 min/max ----------
@@ -1488,9 +1502,17 @@
     // 缩放/框选时实时刷新预览表为当前视图范围；手动坐标轴值不再被缩放重置
     if (chart) {
       chart.on('datazoom', function () {
+        if (rebuilding) return;
         var range = state.followZoom ? getCurrentRange() : null;
         renderStats(range);
         renderPreview(range);
+        // 停止缩放 200ms 后按视图重抽稀：显示点数动态贴近上限
+        if (rebuildTimer) clearTimeout(rebuildTimer);
+        rebuildTimer = setTimeout(function () {
+          rebuildTimer = null;
+          if (rebuilding) return;
+          rebuildDisplay(getCurrentRange());
+        }, 200);
       });
       // 点选基准：点选模式下在网格区内点击，取该处最近数据点时间为基准时间
       chart.getZr().on('click', function (e) {
@@ -1573,20 +1595,9 @@
     // 切换时不重新解析文件：直接从保留的全量数据重建显示数据
     var rawModeEl = $('rawMode');
     if (rawModeEl) rawModeEl.addEventListener('change', function () {
+      // 切换不重新解析：从保留的全量数据按当前视图重建（decimate 受勾选状态控制）
       if (!state.rawParsed || !state.rawParsed.length) { updateAll(true); return; }
-      state.rawCount = state.rawParsed.length;
-      if (rawModeEl.checked) {
-        state.parsed = state.rawParsed;
-        state.showCount = state.rawCount;
-      } else {
-        state.parsed = decimate(state.rawParsed);
-        state.showCount = state.parsed.length;
-      }
-      compute();
-      renderChart(true);
-      var range2 = state.followZoom ? getCurrentRange() : null;
-      renderStats(range2);
-      renderPreview(range2);
+      rebuildDisplay(getCurrentRange());
     });
     bindDropzone();
   }
