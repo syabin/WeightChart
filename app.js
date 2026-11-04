@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '2026-11-04f';
+  var APP_VERSION = '2026-11-04g';
 
   // ---------- 拖拽诊断日志（页面回显，便于定位「拖了没反应」）----------
   // 平时隐藏；出现 ✗ 类异常时自动现身；也可以点标题旁版本徽标手动开合。
@@ -904,9 +904,11 @@
       smooth: false,
       step: state.stepLine ? 'end' : false,
       // 取消 large 自适应取点：不再按阈值切换绘制模式，始终画全部数据点。
-      // ≤10 万点一次性绘制全部；超过 10 万点才分批动态渲染（仍是全部数据，不抽样）。
+      // progressiveThreshold 调大到 500 万 = 实际关闭分帧渲染：
+      // 分帧渲染下缩放会打断/丢弃渲染任务，导致 toolbox/滑条等组件绘制丢失（223万点实测复现）。
+      // 改为原子渲染（一次画完），初载稍慢但组件绝不缺失。
       progressive: 4000,
-      progressiveThreshold: 100000,
+      progressiveThreshold: 5000000,
       connectNulls: false,   // 缺口空值点处断开，不跨缺口连线
       animation: false,
       data: seriesData,
@@ -925,9 +927,9 @@
         showSymbol: false,
         smooth: false,
         step: state.stepLine ? 'end' : false,
-        // 与重量线一致：不用 large 自适应取点，超 10 万点才分批动态渲染全部数据
+        // 与重量线一致：关闭分帧渲染（缩放打断分帧任务会丢组件绘制），原子渲染
         progressive: 4000,
-        progressiveThreshold: 100000,
+        progressiveThreshold: 5000000,
         connectNulls: false,
         animation: false,
         z: 2,                 // 放在重量线（z:3）下层，避免遮挡
